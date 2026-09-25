@@ -6,6 +6,7 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
 
 from .config import MODERATION_CHAT_ID, ADMIN_IDS, SOURCE_CHANNELS
+from .dedup import Deduplicator
 from .keyboards import preview_keyboard
 from .llm import LLMService
 from .photos import PhotoService
@@ -33,6 +34,7 @@ class ChannelMonitor:
         self.photos = photos
         self.storage = storage
         self._targets = [MODERATION_CHAT_ID] if MODERATION_CHAT_ID else list(ADMIN_IDS)
+        self._dedup = Deduplicator()
 
     async def start(self):
         await self.client.start()
@@ -61,6 +63,11 @@ class ChannelMonitor:
 
         chat = await event.get_chat()
         source_name = getattr(chat, "title", None) or getattr(chat, "username", None) or "источник"
+
+        if self._dedup.is_duplicate(text):
+            logger.info("Дубликат новости из %s, пропускаю", source_name)
+            return
+
         logger.info("Новый пост из %s (%s символов)", source_name, len(text))
 
         if not self._targets:
