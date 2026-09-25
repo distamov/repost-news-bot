@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 .venv/
+scripts/.telethon_login_state.json
+*.session

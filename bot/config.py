@@ -23,3 +23,26 @@ TARGET_CHANNEL_ID = int(_target_raw) if _target_raw.lstrip("-").isdigit() else _
 
 _admin_ids_raw = os.environ.get("ADMIN_IDS", "")
 ADMIN_IDS = {int(x) for x in _admin_ids_raw.split(",") if x.strip()}
+
+# Автомониторинг каналов-источников (через Telethon user-сессию).
+# Всё это опционально: если не заполнено, бот просто не запускает мониторинг
+# и работает только в ручном режиме (/rewrite).
+_api_id_raw = os.environ.get("TELEGRAM_API_ID", "")
+TELEGRAM_API_ID = int(_api_id_raw) if _api_id_raw.strip() else None
+TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH") or None
+TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION") or None
+
+_sources_raw = os.environ.get("SOURCE_CHANNELS", "")
+SOURCE_CHANNELS = [s.strip() for s in _sources_raw.split(",") if s.strip()]
+
+_moderation_raw = os.environ.get("MODERATION_CHAT_ID", "")
+if _moderation_raw.strip():
+    MODERATION_CHAT_ID = (
+        int(_moderation_raw) if _moderation_raw.lstrip("-").isdigit() else _moderation_raw
+    )
+else:
+    MODERATION_CHAT_ID = None
+
+MONITOR_ENABLED = bool(
+    TELEGRAM_API_ID and TELEGRAM_API_HASH and TELEGRAM_SESSION and SOURCE_CHANNELS
+)

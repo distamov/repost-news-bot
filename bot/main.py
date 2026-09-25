@@ -6,8 +6,11 @@ from aiogram import Bot, Dispatcher
 from . import config
 from .handlers.rewrite import router
 from .llm import LLMService
+from .monitor import ChannelMonitor
 from .photos import PhotoService
 from .storage import Storage
+
+logger = logging.getLogger(__name__)
 
 
 async def main():
@@ -17,15 +20,39 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
 
-    dp["llm"] = LLMService(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL)
-    dp["photos"] = PhotoService(config.PEXELS_API_KEY)
-    dp["storage"] = Storage()
+    llm = LLMService(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL)
+    photos = PhotoService(config.PEXELS_API_KEY)
+    storage = Storage()
+
+    dp["llm"] = llm
+    dp["photos"] = photos
+    dp["storage"] = storage
 
     await bot.delete_webhook(drop_pending_updates=True)
+
+    tasks = [dp.start_polling(bot)]
+
+    if config.MONITOR_ENABLED:
+        monitor = ChannelMonitor(
+            api_id=config.TELEGRAM_API_ID,
+            api_hash=config.TELEGRAM_API_HASH,
+            session=config.TELEGRAM_SESSION,
+            bot=bot,
+            llm=llm,
+            photos=photos,
+            storage=storage,
+        )
+        tasks.append(monitor.start())
+    else:
+        logger.warning(
+            "Автомониторинг каналов выключен: заполни TELEGRAM_API_ID, "
+            "TELEGRAM_API_HASH, TELEGRAM_SESSION и SOURCE_CHANNELS в .env"
+        )
+
     try:
-        await dp.start_polling(bot)
+        await asyncio.gather(*tasks)
     finally:
-        await dp["photos"].close()
+        await photos.close()
 
 
 if __name__ == "__main__":
