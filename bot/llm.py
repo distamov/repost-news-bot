@@ -1,4 +1,4 @@
-from anthropic import AsyncAnthropic
+import httpx
 
 SYSTEM_PROMPT = """Ты — редактор узбекского новостного Telegram-канала.
 Тебе присылают текст новости на любом языке (русский, английский, узбекский
@@ -24,20 +24,30 @@ SYSTEM_PROMPT = """Ты — редактор узбекского новостн
 
 
 class LLMService:
+    """Рерайт и перевод через OpenRouter (OpenAI-совместимый Chat Completions API)."""
+
     def __init__(self, api_key: str, model: str):
-        self.client = AsyncAnthropic(api_key=api_key)
         self.model = model
+        self._client = httpx.AsyncClient(
+            base_url="https://openrouter.ai/api/v1",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=60,
+        )
 
     async def rewrite_and_translate(self, source_text: str) -> tuple[str, str]:
-        response = await self.client.messages.create(
-            model=self.model,
-            max_tokens=1500,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": source_text}],
+        response = await self._client.post(
+            "/chat/completions",
+            json={
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": source_text},
+                ],
+            },
         )
-        raw = "".join(
-            block.text for block in response.content if block.type == "text"
-        ).strip()
+        response.raise_for_status()
+        data = response.json()
+        raw = data["choices"][0]["message"]["content"].strip()
 
         if "###KEYWORDS###" in raw:
             body, keywords = raw.split("###KEYWORDS###", 1)
@@ -45,3 +55,6 @@ class LLMService:
             body, keywords = raw, "news"
 
         return body.strip(), keywords.strip()
+
+    async def close(self):
+        await self._client.aclose()

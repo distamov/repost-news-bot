@@ -20,7 +20,7 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
 
-    llm = LLMService(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL)
+    llm = LLMService(config.OPENROUTER_API_KEY, config.OPENROUTER_MODEL)
     photos = PhotoService(config.PEXELS_API_KEY)
     storage = Storage()
 
@@ -53,6 +53,7 @@ async def main():
         await asyncio.gather(*tasks)
     finally:
         await photos.close()
+        await llm.close()
 
 
 if __name__ == "__main__":

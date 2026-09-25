@@ -13,10 +13,13 @@ def _required(name: str) -> str:
 
 
 BOT_TOKEN = _required("BOT_TOKEN")
-ANTHROPIC_API_KEY = _required("ANTHROPIC_API_KEY")
+OPENROUTER_API_KEY = _required("OPENROUTER_API_KEY")
 PEXELS_API_KEY = _required("PEXELS_API_KEY")
 
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
+# Список бесплатных моделей и их id меняется на OpenRouter довольно часто —
+# смотри актуальный на https://openrouter.ai/models?max_price=0 и правь
+# в .env, код менять не нужно.
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3.1:free")
 
 _target_raw = _required("TARGET_CHANNEL_ID")
 TARGET_CHANNEL_ID = int(_target_raw) if _target_raw.lstrip("-").isdigit() else _target_raw
