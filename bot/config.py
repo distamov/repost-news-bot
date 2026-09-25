@@ -13,13 +13,10 @@ def _required(name: str) -> str:
 
 
 BOT_TOKEN = _required("BOT_TOKEN")
-OPENROUTER_API_KEY = _required("OPENROUTER_API_KEY")
+GEMINI_API_KEY = _required("GEMINI_API_KEY")
 PEXELS_API_KEY = _required("PEXELS_API_KEY")
 
-# Список бесплатных моделей и их id меняется на OpenRouter довольно часто —
-# смотри актуальный на https://openrouter.ai/models?max_price=0 и правь
-# в .env, код менять не нужно.
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3.1:free")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 _target_raw = _required("TARGET_CHANNEL_ID")
 TARGET_CHANNEL_ID = int(_target_raw) if _target_raw.lstrip("-").isdigit() else _target_raw

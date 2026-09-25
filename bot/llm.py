@@ -24,30 +24,27 @@ SYSTEM_PROMPT = """Ты — редактор узбекского новостн
 
 
 class LLMService:
-    """Рерайт и перевод через OpenRouter (OpenAI-совместимый Chat Completions API)."""
+    """Рерайт и перевод через Gemini API (generativelanguage.googleapis.com)."""
 
     def __init__(self, api_key: str, model: str):
         self.model = model
         self._client = httpx.AsyncClient(
-            base_url="https://openrouter.ai/api/v1",
-            headers={"Authorization": f"Bearer {api_key}"},
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            params={"key": api_key},
             timeout=60,
         )
 
     async def rewrite_and_translate(self, source_text: str) -> tuple[str, str]:
         response = await self._client.post(
-            "/chat/completions",
+            f"/models/{self.model}:generateContent",
             json={
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": source_text},
-                ],
+                "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                "contents": [{"role": "user", "parts": [{"text": source_text}]}],
             },
         )
         response.raise_for_status()
         data = response.json()
-        raw = data["choices"][0]["message"]["content"].strip()
+        raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
         if "###KEYWORDS###" in raw:
             body, keywords = raw.split("###KEYWORDS###", 1)

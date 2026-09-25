@@ -20,7 +20,7 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
 
-    llm = LLMService(config.OPENROUTER_API_KEY, config.OPENROUTER_MODEL)
+    llm = LLMService(config.GEMINI_API_KEY, config.GEMINI_MODEL)
     photos = PhotoService(config.PEXELS_API_KEY)
     storage = Storage()
 

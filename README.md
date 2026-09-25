@@ -34,12 +34,11 @@ user-сессия, библиотека Telethon) — как будто вы с�
    @getidsbot, переслав ему пост из канала).
 3. Узнайте свой Telegram user id (например, через @userinfobot) →
    `ADMIN_IDS`. Через запятую, если модераторов несколько.
-4. Ключ OpenRouter → `OPENROUTER_API_KEY` (openrouter.ai/keys, бесплатная
-   регистрация). Модель по умолчанию — бесплатная (`OPENROUTER_MODEL`,
-   суффикс `:free`); актуальный список бесплатных моделей смотрите на
-   https://openrouter.ai/models?max_price=0 и меняйте прямо в `.env` —
-   список периодически обновляется, а лимиты бесплатных моделей
-   ограничены (обычно около 20 запросов в минуту).
+4. Ключ Gemini API → `GEMINI_API_KEY` — берётся на
+   https://aistudio.google.com/apikey (обычный Google-аккаунт, без карты).
+   Это отдельный бесплатный тариф именно API, не подписка Gemini
+   Advanced/Google One — те не дают программного доступа. Модель задаётся
+   через `GEMINI_MODEL` (по умолчанию `gemini-2.0-flash`).
 5. Ключ Pexels API → `PEXELS_API_KEY` (pexels.com/api, бесплатно).
 
 ### 2. Автомониторинг каналов
