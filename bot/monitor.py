@@ -6,13 +6,12 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
 
-from .config import MODERATION_CHAT_ID, ADMIN_IDS, CHANNEL_SIGNATURE, SOURCE_CHANNELS
+from .config import ADMIN_IDS, CHANNELS, MODERATION_CHAT_ID, SOURCE_CHANNELS
 from .dedup import Deduplicator
-from .formatting import build_post_html
-from .keyboards import preview_keyboard
+from .keyboards import channel_picker_keyboard
 from .llm import LLMService
 from .photos import PhotoService
-from .posting import send_post
+from .pipeline import build_and_send_preview
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -84,45 +83,31 @@ class ChannelMonitor:
             except Exception:
                 logger.exception("Не удалось скачать фото исходного поста для анализа")
 
-        try:
-            rewritten, keywords = await self.llm.rewrite_and_translate(text, source_photo_bytes)
-        except Exception:
-            logger.exception("Не удалось переписать пост из %s", source_name)
-            return
-
-        formatted = build_post_html(rewritten, CHANNEL_SIGNATURE)
-
-        try:
-            photo_urls = await self.photos.search(keywords)
-        except Exception:
-            logger.exception("Не удалось найти фото")
-            photo_urls = []
+        header = f"📡 Новый пост из «{html.escape(source_name)}»"
 
         for target in self._targets:
-            await self._send_preview(target, source_name, formatted, keywords, photo_urls)
+            if len(CHANNELS) == 1:
+                try:
+                    await self.bot.send_message(
+                        target, f"{header}\n⏳ Готовлю пост для «{CHANNELS[0].label}»..."
+                    )
+                except Exception:
+                    logger.exception("Не удалось отправить сообщение в %s", target)
+                    continue
+                await build_and_send_preview(
+                    self.bot, self.llm, self.photos, self.storage, CHANNELS[0], text, source_photo_bytes, target
+                )
+                continue
 
-    async def _send_preview(self, chat_id, source_name, text, keywords, photo_urls):
-        item = self.storage.create(
-            text=text,
-            keywords=keywords,
-            photo_urls=photo_urls,
-            chat_id=chat_id,
-            requester_id=0,
-        )
-
-        try:
-            await self.bot.send_message(chat_id, f"📡 Новый пост из «{html.escape(source_name)}»")
-
-            photo = photo_urls[0] if photo_urls else None
-            if not photo:
-                await self.bot.send_message(chat_id, "⚠️ Фото не найдено, будет опубликован только текст.")
-
-            photo_message_id, text_message_id, combined = await send_post(
-                self.bot, chat_id, text, photo=photo, reply_markup=preview_keyboard(item.id)
+            selection = self.storage.create_selection(
+                text=text, photo_bytes=source_photo_bytes, chat_id=target, requester_id=0
             )
-            item.photo_message_id = photo_message_id
-            item.text_message_id = text_message_id
-            item.combined = combined
-        except Exception:
-            logger.exception("Не удалось отправить превью в чат %s", chat_id)
-            self.storage.delete(item.id)
+            try:
+                await self.bot.send_message(
+                    target,
+                    f"{header}\nДля какого канала готовим пост?",
+                    reply_markup=channel_picker_keyboard(selection.id, CHANNELS),
+                )
+            except Exception:
+                logger.exception("Не удалось отправить меню выбора канала в %s", target)
+                self.storage.delete_selection(selection.id)

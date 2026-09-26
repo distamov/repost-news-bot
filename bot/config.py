@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
@@ -22,15 +23,45 @@ PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "")
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 
-_target_raw = _required("TARGET_CHANNEL_ID")
-TARGET_CHANNEL_ID = int(_target_raw) if _target_raw.lstrip("-").isdigit() else _target_raw
+def _parse_chat_id(raw: str):
+    return int(raw) if raw.lstrip("-").isdigit() else raw
 
-# Небольшая подпись канала в конце каждого поста, например "👉 @your_channel".
-# Если не задано, а TARGET_CHANNEL_ID — публичный юзернейм, подпись строится
-# из него автоматически; для приватного канала без юзернейма подписи не будет.
-CHANNEL_SIGNATURE = os.environ.get("CHANNEL_SIGNATURE") or (
-    f"👉 {_target_raw}" if _target_raw.startswith("@") else ""
-)
+
+@dataclass
+class ChannelConfig:
+    id: object  # int (приватный канал) или "@username" (публичный)
+    label: str
+    language: str  # "ru" или "uz"
+    signature: str
+
+
+def _load_channels() -> list[ChannelConfig]:
+    channels = []
+    i = 1
+    while True:
+        raw_id = os.environ.get(f"CHANNEL_{i}_ID")
+        if not raw_id:
+            break
+        label = os.environ.get(f"CHANNEL_{i}_LABEL", raw_id)
+        language = os.environ.get(f"CHANNEL_{i}_LANG", "uz").strip().lower()
+        signature = os.environ.get(f"CHANNEL_{i}_SIGNATURE", "")
+        channels.append(
+            ChannelConfig(
+                id=_parse_chat_id(raw_id), label=label, language=language, signature=signature
+            )
+        )
+        i += 1
+    return channels
+
+
+# Список каналов публикации: CHANNEL_1_ID, CHANNEL_2_ID, ... (см. .env.example).
+# Каждый канал — со своим языком (ru/uz) и своей подписью/ссылкой в конце поста.
+CHANNELS = _load_channels()
+if not CHANNELS:
+    raise RuntimeError(
+        "Не задано ни одного канала: заполни CHANNEL_1_ID (и опционально "
+        "CHANNEL_1_LABEL / CHANNEL_1_LANG / CHANNEL_1_SIGNATURE) в .env"
+    )
 
 _admin_ids_raw = os.environ.get("ADMIN_IDS", "")
 ADMIN_IDS = {int(x) for x in _admin_ids_raw.split(",") if x.strip()}

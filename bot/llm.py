@@ -6,7 +6,23 @@ import httpx
 RETRYABLE_STATUS_CODES = {429, 503}
 RETRY_DELAYS = (2, 5, 10)
 
-SYSTEM_PROMPT = """Ты — редактор узбекского новостного Telegram-канала.
+_LANGUAGE_LINES = {
+    "uz": (
+        'Изложи результат на узбекском языке, используя КИРИЛЛИЦУ, в стиле, '
+        'привычном для узбекских новостных Telegram-каналов: лаконично, по '
+        'делу, без "воды".'
+    ),
+    "ru": (
+        'Изложи результат на русском языке, в стиле, привычном для '
+        'русскоязычных новостных Telegram-каналов: лаконично, по делу, без '
+        '"воды".'
+    ),
+}
+
+
+def _build_system_prompt(language: str) -> str:
+    language_line = _LANGUAGE_LINES.get(language, _LANGUAGE_LINES["uz"])
+    return f"""Ты — редактор новостного Telegram-канала.
 Тебе присылают текст новости на любом языке (русский, английский, узбекский
 на латинице и т.д.), иногда вместе с фото к этой новости.
 
@@ -17,9 +33,7 @@ SYSTEM_PROMPT = """Ты — редактор узбекского новостн
    формулировки и синонимы. Сохрани все факты, цифры и имена, не добавляй
    ничего, чего не было в оригинале — но результат должен читаться как
    самостоятельный пересказ, а не как построчный перевод оригинала.
-2. Изложи результат на узбекском языке, используя КИРИЛЛИЦУ, в стиле,
-   привычном для узбекских новостных Telegram-каналов: лаконично, по делу,
-   без "воды".
+2. {language_line}
 3. Оформи результат как ДВЕ части, разделённые пустой строкой:
    - Первая строка — короткий цепляющий заголовок (5-9 слов): один уместный
      эмодзи (например ⚡ или 📌), затем ПРОБЕЛ, затем сам заголовок.
@@ -51,7 +65,7 @@ class LLMService:
         )
 
     async def rewrite_and_translate(
-        self, source_text: str, photo_bytes: bytes | None = None
+        self, source_text: str, photo_bytes: bytes | None = None, language: str = "uz"
     ) -> tuple[str, str]:
         parts = [{"text": source_text}]
         if photo_bytes:
@@ -66,7 +80,7 @@ class LLMService:
             )
 
         payload = {
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "systemInstruction": {"parts": [{"text": _build_system_prompt(language)}]},
             "contents": [{"role": "user", "parts": parts}],
         }
 

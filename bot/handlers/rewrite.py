@@ -4,11 +4,11 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 
-from ..config import ADMIN_IDS, CHANNEL_SIGNATURE, TARGET_CHANNEL_ID
-from ..formatting import build_post_html
-from ..keyboards import preview_keyboard
+from ..config import ADMIN_IDS, CHANNELS
+from ..keyboards import channel_picker_keyboard, preview_keyboard
 from ..llm import LLMService
 from ..photos import PhotoService
+from ..pipeline import build_and_send_preview
 from ..posting import as_photo_input, send_post
 from ..storage import Storage
 
@@ -23,13 +23,14 @@ def is_allowed(user_id: int) -> bool:
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     await message.answer(
-        "Привет! Я готовлю посты для канала: переписываю текст, перевожу на "
-        "узбекский (кириллица) и подбираю фото.\n\n"
+        "Привет! Я готовлю посты для каналов: переписываю текст, перевожу "
+        "(если нужно) и подбираю фото.\n\n"
         "Как пользоваться (в личке или в группе, куда меня добавили):\n"
         "1. Перешли мне пост или ответь на него командой /rewrite\n"
         "   (или сразу: /rewrite текст новости)\n"
-        "2. Я пришлю превью с фото и кнопками\n"
-        "3. Нажми «Опубликовать» — и пост уйдёт в канал"
+        "2. Выбери канал, для которого готовится пост\n"
+        "3. Я пришлю превью с фото и кнопками\n"
+        "4. Нажми «Опубликовать» — и пост уйдёт в выбранный канал"
     )
 
 
@@ -56,8 +57,6 @@ async def cmd_rewrite(
         )
         return
 
-    status = await message.reply("⏳ Переписываю и перевожу...")
-
     source_photo_bytes = None
     if source_message and source_message.photo:
         try:
@@ -66,41 +65,67 @@ async def cmd_rewrite(
         except Exception:
             logger.exception("Не удалось скачать фото исходного поста для анализа")
 
-    try:
-        rewritten, keywords = await llm.rewrite_and_translate(source_text, source_photo_bytes)
-    except Exception:
-        logger.exception("LLM rewrite failed")
-        await status.edit_text("Не получилось переписать текст. Попробуй ещё раз позже.")
+    if len(CHANNELS) == 1:
+        await message.reply(f"⏳ Готовлю пост для «{CHANNELS[0].label}»...")
+        await build_and_send_preview(
+            message.bot,
+            llm,
+            photos,
+            storage,
+            CHANNELS[0],
+            source_text,
+            source_photo_bytes,
+            message.chat.id,
+        )
         return
 
-    text = build_post_html(rewritten, CHANNEL_SIGNATURE)
-
-    try:
-        photo_urls = await photos.search(keywords)
-    except Exception:
-        logger.exception("Photo search failed")
-        photo_urls = []
-
-    item = storage.create(
-        text=text,
-        keywords=keywords,
-        photo_urls=photo_urls,
+    selection = storage.create_selection(
+        text=source_text,
+        photo_bytes=source_photo_bytes,
         chat_id=message.chat.id,
         requester_id=message.from_user.id,
     )
-
-    await status.delete()
-
-    photo = photo_urls[0] if photo_urls else None
-    if not photo:
-        await message.answer("⚠️ Фото не найдено, будет опубликован только текст.")
-
-    photo_message_id, text_message_id, combined = await send_post(
-        message.bot, message.chat.id, text, photo=photo, reply_markup=preview_keyboard(item.id)
+    await message.reply(
+        "Для какого канала готовим пост?",
+        reply_markup=channel_picker_keyboard(selection.id, CHANNELS),
     )
-    item.photo_message_id = photo_message_id
-    item.text_message_id = text_message_id
-    item.combined = combined
+
+
+@router.callback_query(F.data.startswith("pick:"))
+async def cb_pick_channel(
+    callback: CallbackQuery, llm: LLMService, photos: PhotoService, storage: Storage, bot: Bot
+):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    _, sid, idx_str = callback.data.split(":", 2)
+    selection = storage.get_selection(sid)
+    if not selection:
+        await callback.answer("Это меню уже неактуально.", show_alert=True)
+        return
+
+    idx = int(idx_str)
+    if idx >= len(CHANNELS):
+        await callback.answer("Канал не найден.", show_alert=True)
+        return
+
+    channel = CHANNELS[idx]
+    storage.delete_selection(sid)
+    await callback.message.edit_text(f"⏳ Готовлю пост для «{channel.label}»...")
+
+    await build_and_send_preview(
+        bot, llm, photos, storage, channel, selection.text, selection.photo_bytes, selection.chat_id
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pickcancel:"))
+async def cb_pick_cancel(callback: CallbackQuery, storage: Storage):
+    sid = callback.data.split(":", 1)[1]
+    storage.delete_selection(sid)
+    await callback.message.edit_text("Отменено.")
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("approve:"))
@@ -117,7 +142,7 @@ async def cb_approve(callback: CallbackQuery, storage: Storage, bot: Bot):
 
     photo = item.photo_urls[item.photo_index] if item.photo_urls else None
     try:
-        await send_post(bot, TARGET_CHANNEL_ID, item.text, photo=photo)
+        await send_post(bot, item.target_channel_id, item.text, photo=photo)
     except Exception:
         logger.exception("Publish failed")
         await callback.answer("Ошибка публикации, смотри логи.", show_alert=True)
