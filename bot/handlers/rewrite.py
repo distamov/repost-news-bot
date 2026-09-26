@@ -4,10 +4,12 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 
-from ..config import ADMIN_IDS, TARGET_CHANNEL_ID
+from ..config import ADMIN_IDS, CHANNEL_SIGNATURE, TARGET_CHANNEL_ID
+from ..formatting import build_post_html
 from ..keyboards import preview_keyboard
 from ..llm import LLMService
 from ..photos import PhotoService
+from ..posting import as_photo_input, send_post
 from ..storage import Storage
 
 router = Router()
@@ -43,9 +45,10 @@ async def cmd_rewrite(
         await message.reply("У вас нет прав использовать этого бота.")
         return
 
+    source_message = message.reply_to_message
     source_text = command.args
-    if not source_text and message.reply_to_message:
-        source_text = message.reply_to_message.text or message.reply_to_message.caption
+    if not source_text and source_message:
+        source_text = source_message.text or source_message.caption
     if not source_text:
         await message.reply(
             "Пришли текст после команды или ответь этой командой на пост с текстом:\n"
@@ -62,14 +65,21 @@ async def cmd_rewrite(
         await status.edit_text("Не получилось переписать текст. Попробуй ещё раз позже.")
         return
 
+    text = build_post_html(rewritten, CHANNEL_SIGNATURE)
+
     try:
         photo_urls = await photos.search(keywords)
     except Exception:
         logger.exception("Photo search failed")
         photo_urls = []
 
+    # Фото из исходного поста ставим первым — оно точно совпадает по смыслу,
+    # Pexels-варианты остаются как запасные (кнопка «Другое фото»).
+    if source_message and source_message.photo:
+        photo_urls = [source_message.photo[-1].file_id, *photo_urls]
+
     item = storage.create(
-        text=rewritten,
+        text=text,
         keywords=keywords,
         photo_urls=photo_urls,
         chat_id=message.chat.id,
@@ -78,25 +88,16 @@ async def cmd_rewrite(
 
     await status.delete()
 
-    if photo_urls:
-        photo_msg = await message.answer_photo(photo_urls[0])
-        item.photo_message_id = photo_msg.message_id
-    else:
+    photo = photo_urls[0] if photo_urls else None
+    if not photo:
         await message.answer("⚠️ Фото не найдено, будет опубликован только текст.")
 
-    text_msg = await message.answer(rewritten, reply_markup=preview_keyboard(item.id))
-    item.text_message_id = text_msg.message_id
-
-
-async def publish_to_channel(bot: Bot, text: str, photo_url: str | None):
-    if photo_url:
-        if len(text) <= 1024:
-            await bot.send_photo(TARGET_CHANNEL_ID, photo_url, caption=text)
-        else:
-            await bot.send_photo(TARGET_CHANNEL_ID, photo_url)
-            await bot.send_message(TARGET_CHANNEL_ID, text)
-    else:
-        await bot.send_message(TARGET_CHANNEL_ID, text)
+    photo_message_id, text_message_id, combined = await send_post(
+        message.bot, message.chat.id, text, photo=photo, reply_markup=preview_keyboard(item.id)
+    )
+    item.photo_message_id = photo_message_id
+    item.text_message_id = text_message_id
+    item.combined = combined
 
 
 @router.callback_query(F.data.startswith("approve:"))
@@ -111,9 +112,9 @@ async def cb_approve(callback: CallbackQuery, storage: Storage, bot: Bot):
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
 
-    photo_url = item.photo_urls[item.photo_index] if item.photo_urls else None
+    photo = item.photo_urls[item.photo_index] if item.photo_urls else None
     try:
-        await publish_to_channel(bot, item.text, photo_url)
+        await send_post(bot, TARGET_CHANNEL_ID, item.text, photo=photo)
     except Exception:
         logger.exception("Publish failed")
         await callback.answer("Ошибка публикации, смотри логи.", show_alert=True)
@@ -154,15 +155,23 @@ async def cb_newphoto(callback: CallbackQuery, storage: Storage, bot: Bot):
         return
 
     item.photo_index = (item.photo_index + 1) % len(item.photo_urls)
-    new_url = item.photo_urls[item.photo_index]
+    new_photo = as_photo_input(item.photo_urls[item.photo_index])
 
     if item.photo_message_id:
         try:
-            await bot.edit_message_media(
-                chat_id=item.chat_id,
-                message_id=item.photo_message_id,
-                media=InputMediaPhoto(media=new_url),
-            )
+            if item.combined:
+                media = InputMediaPhoto(media=new_photo, caption=item.text)
+                await bot.edit_message_media(
+                    chat_id=item.chat_id,
+                    message_id=item.photo_message_id,
+                    media=media,
+                    reply_markup=preview_keyboard(item.id),
+                )
+            else:
+                media = InputMediaPhoto(media=new_photo)
+                await bot.edit_message_media(
+                    chat_id=item.chat_id, message_id=item.photo_message_id, media=media
+                )
         except Exception:
             logger.exception("Failed to update preview photo")
 

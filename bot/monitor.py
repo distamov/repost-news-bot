@@ -1,3 +1,4 @@
+import html
 import logging
 
 from aiogram import Bot
@@ -5,11 +6,13 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
 
-from .config import MODERATION_CHAT_ID, ADMIN_IDS, SOURCE_CHANNELS
+from .config import MODERATION_CHAT_ID, ADMIN_IDS, CHANNEL_SIGNATURE, SOURCE_CHANNELS
 from .dedup import Deduplicator
+from .formatting import build_post_html
 from .keyboards import preview_keyboard
 from .llm import LLMService
 from .photos import PhotoService
+from .posting import send_post
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -80,14 +83,26 @@ class ChannelMonitor:
             logger.exception("Не удалось переписать пост из %s", source_name)
             return
 
+        formatted = build_post_html(rewritten, CHANNEL_SIGNATURE)
+
         try:
             photo_urls = await self.photos.search(keywords)
         except Exception:
             logger.exception("Не удалось найти фото")
             photo_urls = []
 
+        # Фото из исходного поста ставим первым — оно точно совпадает по
+        # смыслу, Pexels-варианты остаются как запасные.
+        if event.message.photo:
+            try:
+                source_photo = await self.client.download_media(event.message, file=bytes)
+                if source_photo:
+                    photo_urls = [source_photo, *photo_urls]
+            except Exception:
+                logger.exception("Не удалось скачать фото из исходного поста")
+
         for target in self._targets:
-            await self._send_preview(target, source_name, rewritten, keywords, photo_urls)
+            await self._send_preview(target, source_name, formatted, keywords, photo_urls)
 
     async def _send_preview(self, chat_id, source_name, text, keywords, photo_urls):
         item = self.storage.create(
@@ -99,18 +114,18 @@ class ChannelMonitor:
         )
 
         try:
-            await self.bot.send_message(chat_id, f"📡 Новый пост из «{source_name}»")
+            await self.bot.send_message(chat_id, f"📡 Новый пост из «{html.escape(source_name)}»")
 
-            if photo_urls:
-                photo_msg = await self.bot.send_photo(chat_id, photo_urls[0])
-                item.photo_message_id = photo_msg.message_id
-            else:
+            photo = photo_urls[0] if photo_urls else None
+            if not photo:
                 await self.bot.send_message(chat_id, "⚠️ Фото не найдено, будет опубликован только текст.")
 
-            text_msg = await self.bot.send_message(
-                chat_id, text, reply_markup=preview_keyboard(item.id)
+            photo_message_id, text_message_id, combined = await send_post(
+                self.bot, chat_id, text, photo=photo, reply_markup=preview_keyboard(item.id)
             )
-            item.text_message_id = text_msg.message_id
+            item.photo_message_id = photo_message_id
+            item.text_message_id = text_message_id
+            item.combined = combined
         except Exception:
             logger.exception("Не удалось отправить превью в чат %s", chat_id)
             self.storage.delete(item.id)

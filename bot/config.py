@@ -21,6 +21,13 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 _target_raw = _required("TARGET_CHANNEL_ID")
 TARGET_CHANNEL_ID = int(_target_raw) if _target_raw.lstrip("-").isdigit() else _target_raw
 
+# Небольшая подпись канала в конце каждого поста, например "👉 @your_channel".
+# Если не задано, а TARGET_CHANNEL_ID — публичный юзернейм, подпись строится
+# из него автоматически; для приватного канала без юзернейма подписи не будет.
+CHANNEL_SIGNATURE = os.environ.get("CHANNEL_SIGNATURE") or (
+    f"👉 {_target_raw}" if _target_raw.startswith("@") else ""
+)
+
 _admin_ids_raw = os.environ.get("ADMIN_IDS", "")
 ADMIN_IDS = {int(x) for x in _admin_ids_raw.split(",") if x.strip()}
 

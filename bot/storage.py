@@ -1,6 +1,9 @@
 import uuid
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
+
+# Элемент фото — либо URL/file_id (str), либо сырые байты картинки (bytes).
+Photo = Union[str, bytes]
 
 
 @dataclass
@@ -8,12 +11,13 @@ class PendingPost:
     id: str
     text: str
     keywords: str
-    photo_urls: list[str]
+    photo_urls: list[Photo]
     chat_id: int
     requester_id: int
     photo_index: int = 0
     photo_message_id: Optional[int] = None
     text_message_id: Optional[int] = None
+    combined: bool = False
 
 
 class Storage:
