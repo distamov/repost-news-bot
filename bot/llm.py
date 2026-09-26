@@ -1,4 +1,9 @@
+import asyncio
+
 import httpx
+
+RETRYABLE_STATUS_CODES = {429, 503}
+RETRY_DELAYS = (2, 5, 10)
 
 SYSTEM_PROMPT = """Ты — редактор узбекского новостного Telegram-канала.
 Тебе присылают текст новости на любом языке (русский, английский, узбекский
@@ -35,13 +40,19 @@ class LLMService:
         )
 
     async def rewrite_and_translate(self, source_text: str) -> tuple[str, str]:
-        response = await self._client.post(
-            f"/models/{self.model}:generateContent",
-            json={
-                "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-                "contents": [{"role": "user", "parts": [{"text": source_text}]}],
-            },
-        )
+        payload = {
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [{"text": source_text}]}],
+        }
+
+        for attempt, delay in enumerate((*RETRY_DELAYS, None)):
+            response = await self._client.post(
+                f"/models/{self.model}:generateContent", json=payload
+            )
+            if response.status_code not in RETRYABLE_STATUS_CODES or delay is None:
+                break
+            await asyncio.sleep(delay)
+
         response.raise_for_status()
         data = response.json()
         raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
