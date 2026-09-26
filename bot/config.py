@@ -13,6 +13,10 @@ def _required(name: str) -> str:
     return value
 
 
+# Если задан (Render и похожие хостинги задают его сами) — запускается
+# служебный HTTP-сервер для проверки "жив ли" сервис.
+PORT = os.environ.get("PORT")
+
 BOT_TOKEN = _required("BOT_TOKEN")
 GEMINI_API_KEY = _required("GEMINI_API_KEY")
 PEXELS_API_KEY = _required("PEXELS_API_KEY")

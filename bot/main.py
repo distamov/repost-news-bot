@@ -7,6 +7,7 @@ from aiogram.enums import ParseMode
 
 from . import config
 from .handlers.rewrite import router
+from .health import run_health_server
 from .llm import LLMService
 from .monitor import ChannelMonitor
 from .photos import PhotoService
@@ -36,6 +37,9 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
 
     tasks = [dp.start_polling(bot)]
+
+    if config.PORT:
+        tasks.append(run_health_server(int(config.PORT)))
 
     if config.MONITOR_ENABLED:
         monitor = ChannelMonitor(
