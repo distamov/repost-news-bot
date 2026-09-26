@@ -77,8 +77,15 @@ class ChannelMonitor:
             logger.warning("Нет получателей для модерации: заполни ADMIN_IDS или MODERATION_CHAT_ID")
             return
 
+        source_photo_bytes = None
+        if event.message.photo:
+            try:
+                source_photo_bytes = await self.client.download_media(event.message, file=bytes)
+            except Exception:
+                logger.exception("Не удалось скачать фото исходного поста для анализа")
+
         try:
-            rewritten, keywords = await self.llm.rewrite_and_translate(text)
+            rewritten, keywords = await self.llm.rewrite_and_translate(text, source_photo_bytes)
         except Exception:
             logger.exception("Не удалось переписать пост из %s", source_name)
             return
@@ -90,16 +97,6 @@ class ChannelMonitor:
         except Exception:
             logger.exception("Не удалось найти фото")
             photo_urls = []
-
-        # Фото из исходного поста ставим первым — оно точно совпадает по
-        # смыслу, Pexels-варианты остаются как запасные.
-        if event.message.photo:
-            try:
-                source_photo = await self.client.download_media(event.message, file=bytes)
-                if source_photo:
-                    photo_urls = [source_photo, *photo_urls]
-            except Exception:
-                logger.exception("Не удалось скачать фото из исходного поста")
 
         for target in self._targets:
             await self._send_preview(target, source_name, formatted, keywords, photo_urls)

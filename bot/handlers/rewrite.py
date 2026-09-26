@@ -58,8 +58,16 @@ async def cmd_rewrite(
 
     status = await message.reply("⏳ Переписываю и перевожу...")
 
+    source_photo_bytes = None
+    if source_message and source_message.photo:
+        try:
+            buf = await message.bot.download(source_message.photo[-1].file_id)
+            source_photo_bytes = buf.read()
+        except Exception:
+            logger.exception("Не удалось скачать фото исходного поста для анализа")
+
     try:
-        rewritten, keywords = await llm.rewrite_and_translate(source_text)
+        rewritten, keywords = await llm.rewrite_and_translate(source_text, source_photo_bytes)
     except Exception:
         logger.exception("LLM rewrite failed")
         await status.edit_text("Не получилось переписать текст. Попробуй ещё раз позже.")
@@ -72,11 +80,6 @@ async def cmd_rewrite(
     except Exception:
         logger.exception("Photo search failed")
         photo_urls = []
-
-    # Фото из исходного поста ставим первым — оно точно совпадает по смыслу,
-    # Pexels-варианты остаются как запасные (кнопка «Другое фото»).
-    if source_message and source_message.photo:
-        photo_urls = [source_message.photo[-1].file_id, *photo_urls]
 
     item = storage.create(
         text=text,
