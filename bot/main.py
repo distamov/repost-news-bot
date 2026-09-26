@@ -26,7 +26,7 @@ async def main():
     dp.include_router(router)
 
     llm = LLMService(config.GEMINI_API_KEY, config.GEMINI_MODEL)
-    photos = PhotoService(config.PEXELS_API_KEY)
+    photos = PhotoService(config.PEXELS_API_KEY, config.PIXABAY_API_KEY)
     storage = Storage()
 
     dp["llm"] = llm

@@ -16,6 +16,10 @@ BOT_TOKEN = _required("BOT_TOKEN")
 GEMINI_API_KEY = _required("GEMINI_API_KEY")
 PEXELS_API_KEY = _required("PEXELS_API_KEY")
 
+# Необязательный второй источник фото — pixabay.com/api/docs (бесплатно).
+# Если не задан, поиск идёт только по Pexels.
+PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "")
+
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 
 _target_raw = _required("TARGET_CHANNEL_ID")
