@@ -16,7 +16,7 @@ BOT_TOKEN = _required("BOT_TOKEN")
 GEMINI_API_KEY = _required("GEMINI_API_KEY")
 PEXELS_API_KEY = _required("PEXELS_API_KEY")
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 
 _target_raw = _required("TARGET_CHANNEL_ID")
 TARGET_CHANNEL_ID = int(_target_raw) if _target_raw.lstrip("-").isdigit() else _target_raw
