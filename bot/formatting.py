@@ -1,4 +1,17 @@
 import html
+import re
+
+# Известные опечатки, которые модель периодически допускает в узбекской
+# кириллице — чиним точечно, по мере того как замечаем новые.
+_TYPO_FIXES = {
+    r"\bкейингы\b": "кейинги",
+}
+
+
+def _fix_known_typos(text: str) -> str:
+    for pattern, replacement in _TYPO_FIXES.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
 
 
 def _strip_trailing_period(text: str) -> str:
@@ -29,8 +42,10 @@ def build_post_html(raw_text: str, signature: str = "") -> str:
     else:
         headline, body = stripped, ""
 
-    headline = _ensure_emoji_space(_strip_trailing_period(headline.strip()))
-    paragraphs = [_strip_trailing_period(p.strip()) for p in body.split("\n\n") if p.strip()]
+    headline = _ensure_emoji_space(_strip_trailing_period(_fix_known_typos(headline.strip())))
+    paragraphs = [
+        _strip_trailing_period(_fix_known_typos(p.strip())) for p in body.split("\n\n") if p.strip()
+    ]
 
     parts = [f"<b>{html.escape(headline)}</b>"]
     if paragraphs:
