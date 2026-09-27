@@ -41,8 +41,9 @@ TELEGRAM_API_ID = int(_api_id_raw) if _api_id_raw.strip() else None
 TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH") or None
 TELEGRAM_SESSION = os.environ.get("TELEGRAM_SESSION") or None
 
-_sources_raw = os.environ.get("SOURCE_CHANNELS", "")
-SOURCE_CHANNELS = [s.strip() for s in _sources_raw.split(",") if s.strip()]
+# Список источников теперь хранится и управляется через bot/sources_store.py
+# (команда /sources в боте) — SOURCE_CHANNELS используется только там, для
+# самой первой загрузки, один раз.
 
 _moderation_raw = os.environ.get("MODERATION_CHAT_ID", "")
 if _moderation_raw.strip():
@@ -52,6 +53,4 @@ if _moderation_raw.strip():
 else:
     MODERATION_CHAT_ID = None
 
-MONITOR_ENABLED = bool(
-    TELEGRAM_API_ID and TELEGRAM_API_HASH and TELEGRAM_SESSION and SOURCE_CHANNELS
-)
+MONITOR_ENABLED = bool(TELEGRAM_API_ID and TELEGRAM_API_HASH and TELEGRAM_SESSION)

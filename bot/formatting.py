@@ -7,6 +7,11 @@ _TYPO_FIXES = {
     r"\bкейингы\b": "кейинги",
 }
 
+# Эмодзи для заголовков — ставим сами по кругу, чтобы никогда не шли два
+# одинаковых подряд (и чтобы не зависеть от того, что выберет модель).
+_EMOJI_POOL = ["⚡", "📌", "🚨", "❗️", "🔔", "📍", "🗞️", "💥", "‼️", "📢"]
+_emoji_state = {"index": -1}
+
 
 def _fix_known_typos(text: str) -> str:
     for pattern, replacement in _TYPO_FIXES.items():
@@ -21,16 +26,24 @@ def _strip_trailing_period(text: str) -> str:
     return text[:-1]
 
 
-def _ensure_emoji_space(headline: str) -> str:
-    """Если заголовок начинается с эмодзи/символа без пробела перед текстом
-    (модель иногда так делает) — добавляет пробел."""
-    if len(headline) >= 2 and not headline[0].isalnum() and headline[1] != " ":
-        return f"{headline[0]} {headline[1:].lstrip()}"
-    return headline
+def _strip_leading_symbol(headline: str) -> str:
+    """Убирает эмодзи/символ (и любые пробелы после него), которые модель
+    могла поставить в начале заголовка сама — дальше подставляется свой,
+    из ротации."""
+    i = 0
+    while i < len(headline) and not headline[i].isalnum() and headline[i] != " ":
+        i += 1
+    return headline[i:].lstrip()
+
+
+def _next_emoji() -> str:
+    _emoji_state["index"] = (_emoji_state["index"] + 1) % len(_EMOJI_POOL)
+    return _EMOJI_POOL[_emoji_state["index"]]
 
 
 def build_post_html(raw_text: str, signature: str = "") -> str:
-    """Собирает HTML-пост из ответа LLM: первая строка — жирный заголовок,
+    """Собирает HTML-пост из ответа LLM: первая строка — жирный заголовок
+    (с эмодзи, который бот подставляет сам, по кругу, без повторов подряд),
     дальше — обычный текст без точек в конце абзацев, в конце —
     необязательная подпись канала."""
     stripped = raw_text.strip()
@@ -42,7 +55,11 @@ def build_post_html(raw_text: str, signature: str = "") -> str:
     else:
         headline, body = stripped, ""
 
-    headline = _ensure_emoji_space(_strip_trailing_period(_fix_known_typos(headline.strip())))
+    headline_text = _strip_leading_symbol(
+        _strip_trailing_period(_fix_known_typos(headline.strip()))
+    )
+    headline = f"{_next_emoji()} {headline_text}"
+
     paragraphs = [
         _strip_trailing_period(_fix_known_typos(p.strip())) for p in body.split("\n\n") if p.strip()
     ]

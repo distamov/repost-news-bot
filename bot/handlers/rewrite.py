@@ -390,3 +390,54 @@ async def receive_edited_text(message: Message, state: FSMContext, storage: Stor
     media = item.media_options[item.option_index] if item.media_options else []
     await resend_preview(bot, storage, item, media)
     await message.reply("Текст обновлён ✅")
+
+
+@router.callback_query(F.data.startswith("dupskip:"))
+async def cb_dup_skip(callback: CallbackQuery, storage: Storage):
+    sid = callback.data.split(":", 1)[1]
+    storage.delete_selection(sid)
+    await callback.message.edit_text("⏭ Пропущено (похоже на уже обработанное).")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("dupok:"))
+async def cb_dup_proceed(
+    callback: CallbackQuery,
+    llm: LLMService,
+    photos: PhotoService,
+    storage: Storage,
+    bot: Bot,
+    channels: ChannelStore,
+):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    sid = callback.data.split(":", 1)[1]
+    selection = storage.get_selection(sid)
+    if not selection:
+        await callback.answer("Уже обработано.", show_alert=True)
+        return
+
+    all_channels = channels.all()
+
+    if len(all_channels) == 1:
+        storage.delete_selection(sid)
+        await callback.message.edit_text(f"⏳ Готовлю пост для «{all_channels[0].label}»...")
+        await build_and_send_preview(
+            bot,
+            llm,
+            photos,
+            storage,
+            all_channels[0],
+            selection.text,
+            selection.photo_bytes,
+            selection.chat_id,
+            original_media=selection.original_media,
+        )
+    else:
+        await callback.message.edit_text("Для какого канала готовим пост?")
+        await callback.message.answer(
+            "Выбери канал:", reply_markup=channel_picker_keyboard(sid, all_channels)
+        )
+    await callback.answer()
