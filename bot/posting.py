@@ -1,34 +1,57 @@
 from aiogram import Bot
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InputMediaPhoto, InputMediaVideo
+
+from .storage import MediaItem
 
 CAPTION_LIMIT = 1024
 
 
-def as_photo_input(photo):
-    """photo может быть: URL (str), Telegram file_id (str) или сырые байты
-    картинки (bytes, например скачанные через Telethon) — приводим к тому,
-    что понимает aiogram."""
-    if isinstance(photo, bytes):
-        return BufferedInputFile(photo, filename="photo.jpg")
-    return photo
+def as_media_input(item: MediaItem):
+    if isinstance(item.data, bytes):
+        return BufferedInputFile(item.data, filename="media")
+    return item.data
 
 
-async def send_post(bot: Bot, chat_id, text: str, photo=None, reply_markup=None):
-    """Отправляет пост: фото с подписью одним сообщением, если текст влезает
-    в лимит подписи Telegram (1024 символа), иначе — фото и текст отдельно.
+def _input_media(item: MediaItem, caption: str | None = None):
+    cls = InputMediaPhoto if item.kind == "photo" else InputMediaVideo
+    return cls(media=as_media_input(item), caption=caption)
 
-    Возвращает (photo_message_id, text_message_id, combined) — combined=True,
-    если это одно сообщение (фото+подпись)."""
-    if photo is None:
+
+async def send_post(bot: Bot, chat_id, text: str, media: list[MediaItem] | None = None, reply_markup=None):
+    """Отправляет пост.
+
+    Без медиа — просто текст. Один элемент — фото или видео с подписью
+    одним сообщением (если влезает в лимит Telegram), иначе медиа и текст
+    отдельно. Несколько элементов — альбом (sendMediaGroup); Telegram не
+    даёт прикрепить кнопки к альбому, поэтому кнопки уходят отдельным
+    сообщением следом.
+
+    Возвращает (media_message_ids, text_message_id).
+    """
+    media = media or []
+
+    if not media:
         msg = await bot.send_message(chat_id, text, reply_markup=reply_markup)
-        return None, msg.message_id, False
+        return [], msg.message_id
 
-    if len(text) <= CAPTION_LIMIT:
-        msg = await bot.send_photo(
-            chat_id, as_photo_input(photo), caption=text, reply_markup=reply_markup
-        )
-        return msg.message_id, msg.message_id, True
+    if len(media) == 1:
+        item = media[0]
+        sender = bot.send_photo if item.kind == "photo" else bot.send_video
+        content = as_media_input(item)
+        if len(text) <= CAPTION_LIMIT:
+            msg = await sender(chat_id, content, caption=text, reply_markup=reply_markup)
+            return [msg.message_id], msg.message_id
+        media_msg = await sender(chat_id, content)
+        text_msg = await bot.send_message(chat_id, text, reply_markup=reply_markup)
+        return [media_msg.message_id], text_msg.message_id
 
-    photo_msg = await bot.send_photo(chat_id, as_photo_input(photo))
-    text_msg = await bot.send_message(chat_id, text, reply_markup=reply_markup)
-    return photo_msg.message_id, text_msg.message_id, False
+    group = [
+        _input_media(item, caption=text if i == 0 and len(text) <= CAPTION_LIMIT else None)
+        for i, item in enumerate(media)
+    ]
+    messages = await bot.send_media_group(chat_id, media=group)
+    media_message_ids = [m.message_id for m in messages]
+
+    extra_text = text if len(text) > CAPTION_LIMIT else "⬆️ Пост выше"
+    text_msg = await bot.send_message(chat_id, extra_text, reply_markup=reply_markup)
+    return media_message_ids, text_msg.message_id

@@ -12,7 +12,7 @@ from .keyboards import channel_picker_keyboard
 from .llm import LLMService
 from .photos import PhotoService
 from .pipeline import build_and_send_preview
-from .storage import Storage
+from .storage import MediaItem, Storage
 
 logger = logging.getLogger(__name__)
 
@@ -52,17 +52,56 @@ class ChannelMonitor:
         except Exception:
             logger.debug("catch_up() недоступен в этой версии Telethon, пропускаю", exc_info=True)
 
-        self.client.add_event_handler(
-            self._on_new_message, events.NewMessage(chats=SOURCE_CHANNELS)
-        )
+        self.client.add_event_handler(self._on_new_message, events.NewMessage(chats=SOURCE_CHANNELS))
+        self.client.add_event_handler(self._on_album, events.Album(chats=SOURCE_CHANNELS))
         logger.info("Мониторинг каналов запущен: %s", ", ".join(SOURCE_CHANNELS))
         await self.client.run_until_disconnected()
 
     async def _on_new_message(self, event):
+        if event.message.grouped_id:
+            return  # альбомы обрабатываются отдельно, в _on_album
+
         text = (event.raw_text or "").strip()
         if len(text) < MIN_TEXT_LENGTH:
             return
 
+        original_media: list[MediaItem] = []
+        try:
+            if event.message.photo:
+                data = await self.client.download_media(event.message, file=bytes)
+                if data:
+                    original_media.append(MediaItem("photo", data))
+            elif event.message.video:
+                data = await self.client.download_media(event.message, file=bytes)
+                if data:
+                    original_media.append(MediaItem("video", data))
+        except Exception:
+            logger.exception("Не удалось скачать медиа исходного поста")
+
+        await self._handle_post(event, text, original_media)
+
+    async def _on_album(self, event):
+        text = (event.text or event.raw_text or "").strip()
+        if len(text) < MIN_TEXT_LENGTH:
+            return
+
+        original_media: list[MediaItem] = []
+        for msg in event.messages:
+            try:
+                data = await self.client.download_media(msg, file=bytes)
+            except Exception:
+                logger.exception("Не удалось скачать элемент альбома")
+                continue
+            if not data:
+                continue
+            if msg.photo:
+                original_media.append(MediaItem("photo", data))
+            elif msg.video:
+                original_media.append(MediaItem("video", data))
+
+        await self._handle_post(event, text, original_media)
+
+    async def _handle_post(self, event, text, original_media):
         chat = await event.get_chat()
         source_name = getattr(chat, "title", None) or getattr(chat, "username", None) or "источник"
 
@@ -70,18 +109,17 @@ class ChannelMonitor:
             logger.info("Дубликат новости из %s, пропускаю", source_name)
             return
 
-        logger.info("Новый пост из %s (%s символов)", source_name, len(text))
+        logger.info(
+            "Новый пост из %s (%s символов, %s медиа)", source_name, len(text), len(original_media)
+        )
 
         if not self._targets:
             logger.warning("Нет получателей для модерации: заполни ADMIN_IDS или MODERATION_CHAT_ID")
             return
 
-        source_photo_bytes = None
-        if event.message.photo:
-            try:
-                source_photo_bytes = await self.client.download_media(event.message, file=bytes)
-            except Exception:
-                logger.exception("Не удалось скачать фото исходного поста для анализа")
+        source_photo_bytes = next(
+            (item.data for item in original_media if item.kind == "photo"), None
+        )
 
         header = f"📡 Новый пост из «{html.escape(source_name)}»"
 
@@ -95,12 +133,24 @@ class ChannelMonitor:
                     logger.exception("Не удалось отправить сообщение в %s", target)
                     continue
                 await build_and_send_preview(
-                    self.bot, self.llm, self.photos, self.storage, CHANNELS[0], text, source_photo_bytes, target
+                    self.bot,
+                    self.llm,
+                    self.photos,
+                    self.storage,
+                    CHANNELS[0],
+                    text,
+                    source_photo_bytes,
+                    target,
+                    original_media=original_media,
                 )
                 continue
 
             selection = self.storage.create_selection(
-                text=text, photo_bytes=source_photo_bytes, chat_id=target, requester_id=0
+                text=text,
+                photo_bytes=source_photo_bytes,
+                original_media=original_media,
+                chat_id=target,
+                requester_id=0,
             )
             try:
                 await self.bot.send_message(
