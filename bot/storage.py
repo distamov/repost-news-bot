@@ -27,6 +27,7 @@ class PendingPost:
     option_index: int = 0
     media_message_ids: list = field(default_factory=list)
     text_message_id: Optional[int] = None
+    has_original: bool = False
 
 
 @dataclass

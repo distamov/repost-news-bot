@@ -6,7 +6,8 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
 
-from .config import ADMIN_IDS, CHANNELS, MODERATION_CHAT_ID, SOURCE_CHANNELS
+from .channels_store import ChannelStore
+from .config import ADMIN_IDS, MODERATION_CHAT_ID, SOURCE_CHANNELS
 from .dedup import Deduplicator
 from .keyboards import channel_picker_keyboard
 from .llm import LLMService
@@ -29,12 +30,14 @@ class ChannelMonitor:
         llm: LLMService,
         photos: PhotoService,
         storage: Storage,
+        channels: ChannelStore,
     ):
         self.client = TelegramClient(StringSession(session), api_id, api_hash)
         self.bot = bot
         self.llm = llm
         self.photos = photos
         self.storage = storage
+        self.channels = channels
         self._targets = [MODERATION_CHAT_ID] if MODERATION_CHAT_ID else list(ADMIN_IDS)
         self._dedup = Deduplicator()
 
@@ -122,12 +125,13 @@ class ChannelMonitor:
         )
 
         header = f"📡 Новый пост из «{html.escape(source_name)}»"
+        all_channels = self.channels.all()
 
         for target in self._targets:
-            if len(CHANNELS) == 1:
+            if len(all_channels) == 1:
                 try:
                     await self.bot.send_message(
-                        target, f"{header}\n⏳ Готовлю пост для «{CHANNELS[0].label}»..."
+                        target, f"{header}\n⏳ Готовлю пост для «{all_channels[0].label}»..."
                     )
                 except Exception:
                     logger.exception("Не удалось отправить сообщение в %s", target)
@@ -137,7 +141,7 @@ class ChannelMonitor:
                     self.llm,
                     self.photos,
                     self.storage,
-                    CHANNELS[0],
+                    all_channels[0],
                     text,
                     source_photo_bytes,
                     target,
@@ -156,7 +160,7 @@ class ChannelMonitor:
                 await self.bot.send_message(
                     target,
                     f"{header}\nДля какого канала готовим пост?",
-                    reply_markup=channel_picker_keyboard(selection.id, CHANNELS),
+                    reply_markup=channel_picker_keyboard(selection.id, all_channels),
                 )
             except Exception:
                 logger.exception("Не удалось отправить меню выбора канала в %s", target)

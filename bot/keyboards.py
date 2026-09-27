@@ -10,13 +10,19 @@ def channel_picker_keyboard(selection_id: str, channels) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def preview_keyboard(pid: str) -> InlineKeyboardMarkup:
+def preview_keyboard(pid: str, has_original: bool = False) -> InlineKeyboardMarkup:
+    extra_row = []
+    if has_original:
+        extra_row.append(InlineKeyboardButton(text="📎 Оригинал", callback_data=f"original:{pid}"))
+    extra_row.append(InlineKeyboardButton(text="📤 Своё фото/видео", callback_data=f"customupload:{pid}"))
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"approve:{pid}"),
                 InlineKeyboardButton(text="🔄 Другое фото", callback_data=f"newphoto:{pid}"),
-                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{pid}"),
-            ]
+            ],
+            extra_row,
+            [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{pid}")],
         ]
     )

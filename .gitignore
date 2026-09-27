@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 scripts/.telethon_login_state.json
 *.session
+data/

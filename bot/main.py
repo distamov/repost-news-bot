@@ -6,7 +6,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from . import config
-from .handlers.rewrite import router
+from .channels_store import ChannelStore
+from .handlers.channels import router as channels_router
+from .handlers.rewrite import router as rewrite_router
 from .health import run_health_server
 from .llm import LLMService
 from .monitor import ChannelMonitor
@@ -24,15 +26,18 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
-    dp.include_router(router)
+    dp.include_router(channels_router)
+    dp.include_router(rewrite_router)
 
     llm = LLMService(config.GEMINI_API_KEY, config.GEMINI_MODEL)
     photos = PhotoService(config.PEXELS_API_KEY, config.PIXABAY_API_KEY)
     storage = Storage()
+    channels = ChannelStore()
 
     dp["llm"] = llm
     dp["photos"] = photos
     dp["storage"] = storage
+    dp["channels"] = channels
 
     await bot.delete_webhook(drop_pending_updates=True)
 
@@ -50,6 +55,7 @@ async def main():
             llm=llm,
             photos=photos,
             storage=storage,
+            channels=channels,
         )
         tasks.append(monitor.start())
     else:

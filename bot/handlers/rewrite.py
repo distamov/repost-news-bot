@@ -1,10 +1,14 @@
+import asyncio
 import logging
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaVideo, Message
 
-from ..config import ADMIN_IDS, CHANNELS
+from ..channels_store import ChannelStore
+from ..config import ADMIN_IDS
 from ..keyboards import channel_picker_keyboard, preview_keyboard
 from ..llm import LLMService
 from ..photos import PhotoService
@@ -14,6 +18,15 @@ from ..storage import MediaItem, Storage
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+# Ждём ~1.5с после последнего элемента альбома, прежде чем считать его
+# собранным полностью (Bot API не сообщает заранее размер альбома).
+ALBUM_DEBOUNCE_SECONDS = 1.5
+_pending_debounce: dict[str, asyncio.Task] = {}
+
+
+class UploadForm(StatesGroup):
+    waiting_media = State()
 
 
 def is_allowed(user_id: int) -> bool:
@@ -29,10 +42,31 @@ async def cmd_start(message: Message):
         "1. Перешли мне пост или ответь на него командой /rewrite\n"
         "   (или сразу: /rewrite текст новости)\n"
         "2. Выбери канал, для которого готовится пост\n"
-        "3. Я пришлю превью с фото и кнопками (кнопкой «Другое фото» можно\n"
-        "   долистать до оригинального фото/видео из исходного поста)\n"
-        "4. Нажми «Опубликовать» — и пост уйдёт в выбранный канал"
+        "3. Я пришлю превью с фото и кнопками: «Другое фото» — пролистать\n"
+        "   варианты, «Оригинал» — вернуть исходное фото/видео поста,\n"
+        "   «Своё фото/видео» — прислать своё\n"
+        "4. Нажми «Опубликовать» — и пост уйдёт в выбранный канал\n\n"
+        "Каналами публикации управляй командой /channels"
     )
+
+
+@router.message(UploadForm.waiting_media, F.photo | F.video)
+async def receive_custom_media(message: Message, state: FSMContext, storage: Storage, bot: Bot):
+    data = await state.get_data()
+    pid = data.get("pid")
+
+    if message.media_group_id:
+        storage.buffer_group_item(message.media_group_id, message)
+        _schedule_debounce_finalize(message.media_group_id, pid, state, storage, bot)
+        return
+
+    media_item = (
+        MediaItem("photo", message.photo[-1].file_id)
+        if message.photo
+        else MediaItem("video", message.video.file_id)
+    )
+    await _finalize_custom_upload(bot, storage, storage.get(pid), [media_item])
+    await state.clear()
 
 
 @router.message(F.media_group_id)
@@ -43,6 +77,39 @@ async def buffer_media_group(message: Message, storage: Storage):
     storage.buffer_group_item(message.media_group_id, message)
 
 
+def _schedule_debounce_finalize(group_id, pid, state: FSMContext, storage: Storage, bot: Bot):
+    old_task = _pending_debounce.get(group_id)
+    if old_task:
+        old_task.cancel()
+
+    async def _wait_and_finalize():
+        await asyncio.sleep(ALBUM_DEBOUNCE_SECONDS)
+        messages = storage.get_group(group_id)
+        storage.delete_group(group_id)
+        item = storage.get(pid)
+        if item and messages:
+            media_items = []
+            for m in messages:
+                if m.photo:
+                    media_items.append(MediaItem("photo", m.photo[-1].file_id))
+                elif m.video:
+                    media_items.append(MediaItem("video", m.video.file_id))
+            if media_items:
+                await _finalize_custom_upload(bot, storage, item, media_items)
+        await state.clear()
+        _pending_debounce.pop(group_id, None)
+
+    _pending_debounce[group_id] = asyncio.create_task(_wait_and_finalize())
+
+
+async def _finalize_custom_upload(bot: Bot, storage: Storage, item, media_items: list[MediaItem]):
+    if not item:
+        return
+    item.media_options.append(media_items)
+    item.option_index = len(item.media_options) - 1
+    await resend_preview(bot, storage, item, media_items)
+
+
 @router.message(Command("rewrite"))
 async def cmd_rewrite(
     message: Message,
@@ -50,6 +117,7 @@ async def cmd_rewrite(
     llm: LLMService,
     photos: PhotoService,
     storage: Storage,
+    channels: ChannelStore,
 ):
     if not is_allowed(message.from_user.id):
         await message.reply("У вас нет прав использовать этого бота.")
@@ -94,14 +162,16 @@ async def cmd_rewrite(
         except Exception:
             logger.exception("Не удалось скачать фото исходного поста для анализа")
 
-    if len(CHANNELS) == 1:
-        await message.reply(f"⏳ Готовлю пост для «{CHANNELS[0].label}»...")
+    all_channels = channels.all()
+
+    if len(all_channels) == 1:
+        await message.reply(f"⏳ Готовлю пост для «{all_channels[0].label}»...")
         await build_and_send_preview(
             message.bot,
             llm,
             photos,
             storage,
-            CHANNELS[0],
+            all_channels[0],
             source_text,
             source_photo_bytes,
             message.chat.id,
@@ -118,13 +188,18 @@ async def cmd_rewrite(
     )
     await message.reply(
         "Для какого канала готовим пост?",
-        reply_markup=channel_picker_keyboard(selection.id, CHANNELS),
+        reply_markup=channel_picker_keyboard(selection.id, all_channels),
     )
 
 
 @router.callback_query(F.data.startswith("pick:"))
 async def cb_pick_channel(
-    callback: CallbackQuery, llm: LLMService, photos: PhotoService, storage: Storage, bot: Bot
+    callback: CallbackQuery,
+    llm: LLMService,
+    photos: PhotoService,
+    storage: Storage,
+    bot: Bot,
+    channels: ChannelStore,
 ):
     if not is_allowed(callback.from_user.id):
         await callback.answer("Нет прав.", show_alert=True)
@@ -136,12 +211,11 @@ async def cb_pick_channel(
         await callback.answer("Это меню уже неактуально.", show_alert=True)
         return
 
-    idx = int(idx_str)
-    if idx >= len(CHANNELS):
+    channel = channels.get(int(idx_str))
+    if not channel:
         await callback.answer("Канал не найден.", show_alert=True)
         return
 
-    channel = CHANNELS[idx]
     storage.delete_selection(sid)
     await callback.message.edit_text(f"⏳ Готовлю пост для «{channel.label}»...")
 
@@ -209,6 +283,25 @@ async def cb_reject(callback: CallbackQuery, storage: Storage):
     await callback.answer()
 
 
+async def _apply_media_option(bot: Bot, storage: Storage, item, new_option: list[MediaItem]):
+    if len(item.media_message_ids) == 1 and len(new_option) == 1:
+        new_item = new_option[0]
+        has_caption = item.media_message_ids[0] == item.text_message_id
+        media_cls = InputMediaPhoto if new_item.kind == "photo" else InputMediaVideo
+        media = media_cls(media=as_media_input(new_item), caption=item.text if has_caption else None)
+        try:
+            await bot.edit_message_media(
+                chat_id=item.chat_id,
+                message_id=item.media_message_ids[0],
+                media=media,
+                reply_markup=preview_keyboard(item.id, has_original=item.has_original) if has_caption else None,
+            )
+        except Exception:
+            logger.exception("Failed to update preview media")
+    else:
+        await resend_preview(bot, storage, item, new_option)
+
+
 @router.callback_query(F.data.startswith("newphoto:"))
 async def cb_newphoto(callback: CallbackQuery, storage: Storage, bot: Bot):
     if not is_allowed(callback.from_user.id):
@@ -225,23 +318,33 @@ async def cb_newphoto(callback: CallbackQuery, storage: Storage, bot: Bot):
         return
 
     item.option_index = (item.option_index + 1) % len(item.media_options)
-    new_option = item.media_options[item.option_index]
-
-    if len(item.media_message_ids) == 1 and len(new_option) == 1:
-        new_item = new_option[0]
-        has_caption = item.media_message_ids[0] == item.text_message_id
-        media_cls = InputMediaPhoto if new_item.kind == "photo" else InputMediaVideo
-        media = media_cls(media=as_media_input(new_item), caption=item.text if has_caption else None)
-        try:
-            await bot.edit_message_media(
-                chat_id=item.chat_id,
-                message_id=item.media_message_ids[0],
-                media=media,
-                reply_markup=preview_keyboard(item.id) if has_caption else None,
-            )
-        except Exception:
-            logger.exception("Failed to update preview media")
-    else:
-        await resend_preview(bot, storage, item, new_option)
-
+    await _apply_media_option(bot, storage, item, item.media_options[item.option_index])
     await callback.answer("Медиа обновлено.")
+
+
+@router.callback_query(F.data.startswith("original:"))
+async def cb_use_original(callback: CallbackQuery, storage: Storage, bot: Bot):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    pid = callback.data.split(":", 1)[1]
+    item = storage.get(pid)
+    if not item or not item.has_original:
+        await callback.answer("Оригинал недоступен.", show_alert=True)
+        return
+
+    item.option_index = len(item.media_options) - 1
+    await _apply_media_option(bot, storage, item, item.media_options[item.option_index])
+    await callback.answer("Оставляю оригинал.")
+
+
+@router.callback_query(F.data.startswith("customupload:"))
+async def cb_custom_upload(callback: CallbackQuery, state: FSMContext):
+    pid = callback.data.split(":", 1)[1]
+    await state.set_state(UploadForm.waiting_media)
+    await state.update_data(pid=pid)
+    await callback.message.reply(
+        "Пришли фото или видео, которые хочешь использовать (можно несколько как альбом)."
+    )
+    await callback.answer()

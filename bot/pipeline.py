@@ -2,7 +2,7 @@ import logging
 
 from aiogram import Bot
 
-from .config import ChannelConfig
+from .channels_store import ChannelConfig
 from .formatting import build_post_html
 from .keyboards import preview_keyboard
 from .llm import LLMService
@@ -58,6 +58,7 @@ async def build_and_send_preview(
         chat_id=chat_id,
         requester_id=0,
         target_channel_id=channel.id,
+        has_original=bool(original_media),
     )
 
     media = media_options[0] if media_options else []
@@ -65,7 +66,7 @@ async def build_and_send_preview(
         await bot.send_message(chat_id, "⚠️ Медиа не найдено, будет опубликован только текст.")
 
     media_message_ids, text_message_id = await send_post(
-        bot, chat_id, text, media=media, reply_markup=preview_keyboard(item.id)
+        bot, chat_id, text, media=media, reply_markup=preview_keyboard(item.id, has_original=item.has_original)
     )
     item.media_message_ids = media_message_ids
     item.text_message_id = text_message_id
@@ -85,7 +86,7 @@ async def resend_preview(bot: Bot, storage: Storage, item, media: list[MediaItem
             pass
 
     media_message_ids, text_message_id = await send_post(
-        bot, item.chat_id, item.text, media=media, reply_markup=preview_keyboard(item.id)
+        bot, item.chat_id, item.text, media=media, reply_markup=preview_keyboard(item.id, has_original=item.has_original)
     )
     item.media_message_ids = media_message_ids
     item.text_message_id = text_message_id
