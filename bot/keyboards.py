@@ -23,6 +23,9 @@ def preview_keyboard(pid: str, has_original: bool = False) -> InlineKeyboardMark
                 InlineKeyboardButton(text="🔄 Другое фото", callback_data=f"newphoto:{pid}"),
             ],
             extra_row,
-            [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{pid}")],
+            [
+                InlineKeyboardButton(text="✏️ Править текст", callback_data=f"edittext:{pid}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{pid}"),
+            ],
         ]
     )

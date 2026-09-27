@@ -18,6 +18,14 @@ from .storage import Storage
 logger = logging.getLogger(__name__)
 
 
+async def _notify_admins(bot: Bot, text: str):
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text)
+        except Exception:
+            logger.exception("Не удалось уведомить админа %s", admin_id)
+
+
 async def main():
     logging.basicConfig(level=logging.INFO)
 
@@ -40,6 +48,7 @@ async def main():
     dp["channels"] = channels
 
     await bot.delete_webhook(drop_pending_updates=True)
+    await _notify_admins(bot, "✅ Бот запущен и работает")
 
     tasks = [dp.start_polling(bot)]
 
@@ -66,6 +75,10 @@ async def main():
 
     try:
         await asyncio.gather(*tasks)
+    except Exception as e:
+        logger.exception("Бот упал")
+        await _notify_admins(bot, f"🔴 Бот упал с ошибкой: {e}\nПроверь логи на сервере.")
+        raise
     finally:
         await photos.close()
         await llm.close()

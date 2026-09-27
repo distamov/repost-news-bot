@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaVideo, Messa
 
 from ..channels_store import ChannelStore
 from ..config import ADMIN_IDS
+from ..formatting import build_post_html
 from ..keyboards import channel_picker_keyboard, preview_keyboard
 from ..llm import LLMService
 from ..photos import PhotoService
@@ -27,6 +28,10 @@ _pending_debounce: dict[str, asyncio.Task] = {}
 
 class UploadForm(StatesGroup):
     waiting_media = State()
+
+
+class EditTextForm(StatesGroup):
+    waiting_text = State()
 
 
 def is_allowed(user_id: int) -> bool:
@@ -348,3 +353,40 @@ async def cb_custom_upload(callback: CallbackQuery, state: FSMContext):
         "Пришли фото или видео, которые хочешь использовать (можно несколько как альбом)."
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edittext:"))
+async def cb_edit_text(callback: CallbackQuery, storage: Storage, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    pid = callback.data.split(":", 1)[1]
+    if not storage.get(pid):
+        await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+
+    await state.set_state(EditTextForm.waiting_text)
+    await state.update_data(pid=pid)
+    await callback.message.reply(
+        "Пришли новый текст поста (первая строка — заголовок, дальше — сам текст; "
+        "подпись канала подставится сама, писать её не нужно)."
+    )
+    await callback.answer()
+
+
+@router.message(EditTextForm.waiting_text, F.text)
+async def receive_edited_text(message: Message, state: FSMContext, storage: Storage, bot: Bot):
+    data = await state.get_data()
+    pid = data.get("pid")
+    item = storage.get(pid)
+    await state.clear()
+
+    if not item:
+        await message.reply("Этот пост уже обработан.")
+        return
+
+    item.text = build_post_html(message.text, item.signature)
+    media = item.media_options[item.option_index] if item.media_options else []
+    await resend_preview(bot, storage, item, media)
+    await message.reply("Текст обновлён ✅")

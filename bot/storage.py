@@ -28,6 +28,7 @@ class PendingPost:
     media_message_ids: list = field(default_factory=list)
     text_message_id: Optional[int] = None
     has_original: bool = False
+    signature: str = ""
 
 
 @dataclass
