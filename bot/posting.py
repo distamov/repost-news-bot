@@ -52,6 +52,12 @@ async def send_post(bot: Bot, chat_id, text: str, media: list[MediaItem] | None 
     messages = await bot.send_media_group(chat_id, media=group)
     media_message_ids = [m.message_id for m in messages]
 
+    if len(text) <= CAPTION_LIMIT and reply_markup is None:
+        # Текст уже поместился подписью к первому фото/видео — отдельное
+        # сообщение не нужно (кнопок к альбому всё равно не прикрепить,
+        # но при финальной публикации в канал кнопок и не будет).
+        return media_message_ids, None
+
     extra_text = text if len(text) > CAPTION_LIMIT else "⬆️ Пост выше"
     text_msg = await bot.send_message(chat_id, extra_text, reply_markup=reply_markup)
     return media_message_ids, text_msg.message_id
