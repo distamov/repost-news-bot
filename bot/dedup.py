@@ -37,32 +37,32 @@ class Deduplicator:
 
     def __init__(self, ttl_seconds: int = 24 * 3600):
         self._ttl = ttl_seconds
-        # (время, нормализованный текст, значимые слова, источник)
-        self._seen: list[tuple[float, str, set[str], str]] = []
+        # (время, нормализованный текст, значимые слова, источник, ссылка на пост)
+        self._seen: list[tuple[float, str, set[str], str, Optional[str]]] = []
 
-    def find_duplicate(self, text: str) -> Optional[str]:
-        """Возвращает название источника, из которого уже была похожая
-        новость, или None, если дубликатов не найдено."""
+    def find_duplicate(self, text: str) -> Optional[tuple[str, Optional[str]]]:
+        """Возвращает (название источника, ссылка на исходный пост) для уже
+        обработанной похожей новости, или None, если дубликатов не найдено."""
         normalized = _normalize(text)
         words = _significant_words(normalized)
         now = time.monotonic()
         self._purge(now)
 
-        for _, seen_text, seen_words, source_name in self._seen:
+        for _, seen_text, seen_words, source_name, source_link in self._seen:
             if SequenceMatcher(None, normalized, seen_text).ratio() >= SIMILARITY_THRESHOLD:
-                return source_name
+                return source_name, source_link
             if words and seen_words:
                 overlap = len(words & seen_words) / min(len(words), len(seen_words))
                 if overlap >= WORD_OVERLAP_THRESHOLD:
-                    return source_name
+                    return source_name, source_link
         return None
 
-    def add(self, text: str, source_name: str) -> None:
+    def add(self, text: str, source_name: str, source_link: Optional[str] = None) -> None:
         normalized = _normalize(text)
         self._seen.append(
-            (time.monotonic(), normalized, _significant_words(normalized), source_name)
+            (time.monotonic(), normalized, _significant_words(normalized), source_name, source_link)
         )
 
     def _purge(self, now: float) -> None:
         cutoff = now - self._ttl
-        self._seen = [(ts, t, w, s) for ts, t, w, s in self._seen if ts >= cutoff]
+        self._seen = [(ts, t, w, s, link) for ts, t, w, s, link in self._seen if ts >= cutoff]

@@ -22,6 +22,20 @@ logger = logging.getLogger(__name__)
 MIN_TEXT_LENGTH = 20
 
 
+def _build_source_link(chat, message_id: int | None) -> str | None:
+    username = getattr(chat, "username", None)
+    if username and message_id:
+        return f"https://t.me/{username}/{message_id}"
+    return None
+
+
+def _source_ref(name: str, link: str | None) -> str:
+    escaped = html.escape(name)
+    if link:
+        return f'<a href="{html.escape(link, quote=True)}">{escaped}</a>'
+    return escaped
+
+
 class ChannelMonitor:
     def __init__(
         self,
@@ -94,7 +108,7 @@ class ChannelMonitor:
         except Exception:
             logger.exception("Не удалось скачать медиа исходного поста")
 
-        await self._handle_post(chat, text, original_media)
+        await self._handle_post(chat, text, original_media, event.message.id)
 
     async def _on_album(self, event):
         chat = await event.get_chat()
@@ -119,16 +133,18 @@ class ChannelMonitor:
             elif msg.video:
                 original_media.append(MediaItem("video", data))
 
-        await self._handle_post(chat, text, original_media)
+        message_id = event.messages[0].id if event.messages else None
+        await self._handle_post(chat, text, original_media, message_id)
 
-    async def _handle_post(self, chat, text, original_media):
+    async def _handle_post(self, chat, text, original_media, message_id):
         source_name = getattr(chat, "title", None) or getattr(chat, "username", None) or "источник"
+        source_link = _build_source_link(chat, message_id)
 
         if not self._targets:
             logger.warning("Нет получателей для модерации: заполни ADMIN_IDS или MODERATION_CHAT_ID")
             return
 
-        duplicate_source = self._dedup.find_duplicate(text)
+        duplicate = self._dedup.find_duplicate(text)
 
         source_photo_bytes = next(
             (item.data for item in original_media if item.kind == "photo"), None
@@ -143,11 +159,14 @@ class ChannelMonitor:
                 requester_id=0,
             )
 
-            if duplicate_source:
-                await self._send_duplicate_prompt(target, source_name, duplicate_source, selection.id)
+            if duplicate:
+                dup_name, dup_link = duplicate
+                await self._send_duplicate_prompt(
+                    target, source_name, source_link, dup_name, dup_link, selection.id
+                )
                 continue
 
-            header = f"📡 Новый пост из «{html.escape(source_name)}»"
+            header = f"📡 Новый пост из «{_source_ref(source_name, source_link)}»"
             all_channels = self.channels.all()
 
             if len(all_channels) == 1:
@@ -182,10 +201,12 @@ class ChannelMonitor:
                 logger.exception("Не удалось отправить меню выбора канала в %s", target)
                 self.storage.delete_selection(selection.id)
 
-        if not duplicate_source:
-            self._dedup.add(text, source_name)
+        if not duplicate:
+            self._dedup.add(text, source_name, source_link)
 
-    async def _send_duplicate_prompt(self, target, source_name, duplicate_source, selection_id):
+    async def _send_duplicate_prompt(
+        self, target, source_name, source_link, dup_name, dup_link, selection_id
+    ):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -197,8 +218,9 @@ class ChannelMonitor:
         try:
             await self.bot.send_message(
                 target,
-                f"📡 Пост из «{html.escape(source_name)}» очень похож на уже обработанный "
-                f"ранее (из «{html.escape(duplicate_source)}»). Обработать всё равно?",
+                f"📡 Пост из «{_source_ref(source_name, source_link)}» очень похож на уже "
+                f"обработанный ранее (из «{_source_ref(dup_name, dup_link)}»). "
+                f"Обработать всё равно?",
                 reply_markup=keyboard,
             )
         except Exception:
