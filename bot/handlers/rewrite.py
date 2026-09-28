@@ -17,7 +17,7 @@ from ..llm import LLMService
 from ..photos import PhotoService
 from ..pipeline import build_and_send_preview, resend_preview
 from ..posting import as_media_input, send_post
-from ..scheduled_store import ScheduledStore, format_tashkent, parse_tashkent_time
+from ..scheduled_store import QUEUE_INTERVAL_MINUTES, ScheduledStore, format_tashkent, parse_tashkent_time
 from ..storage import MediaItem, Storage
 
 router = Router()
@@ -491,6 +491,34 @@ async def _do_schedule(bot: Bot, storage: Storage, scheduled: ScheduledStore, pi
     except Exception:
         pass
     return format_tashkent(publish_at)
+
+
+@router.callback_query(F.data.startswith("schedqueue:"))
+async def cb_schedule_queue(
+    callback: CallbackQuery, storage: Storage, scheduled: ScheduledStore, bot: Bot, state: FSMContext
+):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    pid = callback.data.split(":", 1)[1]
+    item = storage.get(pid)
+    if not item:
+        await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    last_ts = scheduled.latest_publish_at(item.target_channel_id)
+    base = max(datetime.fromtimestamp(last_ts, tz=timezone.utc), now_utc) if last_ts else now_utc
+    publish_at = base + timedelta(minutes=QUEUE_INTERVAL_MINUTES)
+
+    when = await _do_schedule(bot, storage, scheduled, pid, publish_at)
+    await state.clear()
+    if when is None:
+        await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+    await callback.message.edit_text(f"📥 Добавлено в очередь — выйдет в {when} (Ташкент).")
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("schedin:"))

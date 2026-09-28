@@ -35,6 +35,7 @@ def preview_keyboard(pid: str, has_original: bool = False) -> InlineKeyboardMark
 def schedule_keyboard(pid: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="📥 В очередь (+30 мин от последнего)", callback_data=f"schedqueue:{pid}")],
             [
                 InlineKeyboardButton(text="+1 час", callback_data=f"schedin:{pid}:60"),
                 InlineKeyboardButton(text="+3 часа", callback_data=f"schedin:{pid}:180"),

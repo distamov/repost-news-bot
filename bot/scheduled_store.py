@@ -13,6 +13,7 @@ MEDIA_DIR = DATA_DIR / "scheduled_media"
 DATA_FILE = DATA_DIR / "scheduled.json"
 
 TASHKENT_TZ = timezone(timedelta(hours=5))  # Узбекистан не переходит на летнее время
+QUEUE_INTERVAL_MINUTES = 30  # шаг между постами при постановке "в очередь"
 
 _TIME_ONLY_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
 _DATE_TIME_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})$")
@@ -128,6 +129,16 @@ class ScheduledStore:
 
     def all(self) -> list[ScheduledPost]:
         return list(self._posts.values())
+
+    def latest_publish_at(self, target_chat_id) -> Optional[float]:
+        """Время последнего уже поставленного в очередь поста для этого
+        канала (или None, если очередь для него пуста) — чтобы следующий
+        "в очередь" пост вставал ровно через QUEUE_INTERVAL_MINUTES после
+        него, а не позже уже прошедшего момента."""
+        timestamps = [
+            p.publish_at for p in self._posts.values() if p.target_chat_id == target_chat_id
+        ]
+        return max(timestamps) if timestamps else None
 
     def due(self, now_ts: float) -> list[ScheduledPost]:
         return [p for p in self._posts.values() if p.publish_at <= now_ts]
