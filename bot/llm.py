@@ -1,10 +1,26 @@
 import asyncio
 import base64
+import logging
 
 import httpx
 
-RETRYABLE_STATUS_CODES = {429, 503}
-RETRY_DELAYS = (2, 5, 10)
+logger = logging.getLogger(__name__)
+
+RETRYABLE_STATUS_CODES = {429, 503}  # стоит повторить тот же запрос ещё раз
+MODEL_FALLBACK_CODES = {404, 429, 503}  # стоит попробовать следующую модель
+RETRY_DELAYS = (3,)  # один быстрый повтор той же модели, дальше — следующая модель
+
+# Google иногда перегружает конкретную модель (особенно алиасы вроде
+# *-latest) сразу у нескольких моделей одновременно, но редко у всех
+# сразу — перебираем по очереди, пока не найдётся живая. Список — только
+# актуальные, не снятые с производства модели (проверено вручную).
+FALLBACK_MODELS = (
+    "gemini-flash-lite-latest",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+)
 
 _LANGUAGE_LINES = {
     "uz": (
@@ -65,6 +81,7 @@ class LLMService:
 
     def __init__(self, api_key: str, model: str):
         self.model = model
+        self._models = (model, *(m for m in FALLBACK_MODELS if m != model))
         self._client = httpx.AsyncClient(
             base_url="https://generativelanguage.googleapis.com/v1beta",
             params={"key": api_key},
@@ -91,13 +108,22 @@ class LLMService:
             "contents": [{"role": "user", "parts": parts}],
         }
 
-        for attempt, delay in enumerate((*RETRY_DELAYS, None)):
-            response = await self._client.post(
-                f"/models/{self.model}:generateContent", json=payload
-            )
-            if response.status_code not in RETRYABLE_STATUS_CODES or delay is None:
-                break
-            await asyncio.sleep(delay)
+        response = None
+        for model in self._models:
+            for attempt, delay in enumerate((*RETRY_DELAYS, None)):
+                response = await self._client.post(
+                    f"/models/{model}:generateContent", json=payload
+                )
+                if response.status_code not in RETRYABLE_STATUS_CODES or delay is None:
+                    break
+                await asyncio.sleep(delay)
+
+            if response.status_code in MODEL_FALLBACK_CODES:
+                logger.warning(
+                    "Модель %s недоступна (%s), пробую следующую", model, response.status_code
+                )
+                continue
+            break
 
         response.raise_for_status()
         data = response.json()
