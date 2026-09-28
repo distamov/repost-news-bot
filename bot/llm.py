@@ -10,6 +10,12 @@ RETRYABLE_STATUS_CODES = {429, 503}  # стоит повторить тот же
 MODEL_FALLBACK_CODES = {404, 429, 503}  # стоит попробовать следующую модель
 RETRY_DELAYS = (3,)  # один быстрый повтор той же модели, дальше — следующая модель
 
+# Перегрузка у Google волнами: бывает, что все модели из списка недоступны
+# разом на несколько минут, а потом отпускает. Если весь круг моделей не
+# дал ответа — ждём и пробуем список заново, прежде чем сдаться совсем.
+ROUNDS = 2
+ROUND_PAUSE = 15
+
 # Google иногда перегружает конкретную модель (особенно алиасы вроде
 # *-latest) сразу у нескольких моделей одновременно, но редко у всех
 # сразу — перебираем по очереди, пока не найдётся живая. Список — только
@@ -109,21 +115,32 @@ class LLMService:
         }
 
         response = None
-        for model in self._models:
-            for attempt, delay in enumerate((*RETRY_DELAYS, None)):
-                response = await self._client.post(
-                    f"/models/{model}:generateContent", json=payload
-                )
-                if response.status_code not in RETRYABLE_STATUS_CODES or delay is None:
-                    break
-                await asyncio.sleep(delay)
+        for round_num in range(ROUNDS):
+            got_response = False
+            for model in self._models:
+                for attempt, delay in enumerate((*RETRY_DELAYS, None)):
+                    response = await self._client.post(
+                        f"/models/{model}:generateContent", json=payload
+                    )
+                    if response.status_code not in RETRYABLE_STATUS_CODES or delay is None:
+                        break
+                    await asyncio.sleep(delay)
 
-            if response.status_code in MODEL_FALLBACK_CODES:
+                if response.status_code in MODEL_FALLBACK_CODES:
+                    logger.warning(
+                        "Модель %s недоступна (%s), пробую следующую", model, response.status_code
+                    )
+                    continue
+                got_response = True
+                break
+
+            if got_response:
+                break
+            if round_num < ROUNDS - 1:
                 logger.warning(
-                    "Модель %s недоступна (%s), пробую следующую", model, response.status_code
+                    "Все модели перегружены, жду %s сек и пробую весь список снова", ROUND_PAUSE
                 )
-                continue
-            break
+                await asyncio.sleep(ROUND_PAUSE)
 
         response.raise_for_status()
         data = response.json()
