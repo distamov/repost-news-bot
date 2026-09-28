@@ -7,14 +7,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaVideo, Message
 
+from datetime import datetime, timedelta, timezone
+
 from ..channels_store import ChannelStore
 from ..config import ADMIN_IDS
 from ..formatting import build_post_html
-from ..keyboards import channel_picker_keyboard, preview_keyboard
+from ..keyboards import channel_picker_keyboard, preview_keyboard, schedule_keyboard
 from ..llm import LLMService
 from ..photos import PhotoService
 from ..pipeline import build_and_send_preview, resend_preview
 from ..posting import as_media_input, send_post
+from ..scheduled_store import ScheduledStore, format_tashkent, parse_tashkent_time
 from ..storage import MediaItem, Storage
 
 router = Router()
@@ -32,6 +35,10 @@ class UploadForm(StatesGroup):
 
 class EditTextForm(StatesGroup):
     waiting_text = State()
+
+
+class ScheduleForm(StatesGroup):
+    waiting_time = State()
 
 
 def is_allowed(user_id: int) -> bool:
@@ -441,3 +448,118 @@ async def cb_dup_proceed(
             "Выбери канал:", reply_markup=channel_picker_keyboard(sid, all_channels)
         )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sched:"))
+async def cb_schedule_menu(callback: CallbackQuery, storage: Storage, state: FSMContext):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    pid = callback.data.split(":", 1)[1]
+    if not storage.get(pid):
+        await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+
+    await state.set_state(ScheduleForm.waiting_time)
+    await state.update_data(pid=pid)
+    await callback.message.reply(
+        "Когда опубликовать? Выбери вариант или напиши точное время по Ташкенту "
+        "сообщением: `19:30` (сегодня/завтра) или `29.09 08:00`.",
+        reply_markup=schedule_keyboard(pid),
+    )
+    await callback.answer()
+
+
+async def _do_schedule(bot: Bot, storage: Storage, scheduled: ScheduledStore, pid: str, publish_at):
+    item = storage.get(pid)
+    if not item:
+        return None
+    media = item.media_options[item.option_index] if item.media_options else []
+    scheduled.add(
+        target_chat_id=item.target_channel_id,
+        text=item.text,
+        media=media,
+        publish_at_utc=publish_at,
+        moderation_chat_id=item.chat_id,
+    )
+    storage.delete(pid)
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=item.chat_id, message_id=item.text_message_id, reply_markup=None
+        )
+    except Exception:
+        pass
+    return format_tashkent(publish_at)
+
+
+@router.callback_query(F.data.startswith("schedin:"))
+async def cb_schedule_in(
+    callback: CallbackQuery, storage: Storage, scheduled: ScheduledStore, bot: Bot, state: FSMContext
+):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    _, pid, minutes_str = callback.data.split(":", 2)
+    publish_at = datetime.now(timezone.utc) + timedelta(minutes=int(minutes_str))
+    when = await _do_schedule(bot, storage, scheduled, pid, publish_at)
+    await state.clear()
+    if when is None:
+        await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+    await callback.message.edit_text(f"🕒 Запланировано на {when} (Ташкент).")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("schedat:"))
+async def cb_schedule_at(
+    callback: CallbackQuery, storage: Storage, scheduled: ScheduledStore, bot: Bot, state: FSMContext
+):
+    if not is_allowed(callback.from_user.id):
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+
+    _, pid, hh, mm = callback.data.split(":", 3)
+    now_utc = datetime.now(timezone.utc)
+    publish_at = parse_tashkent_time(f"{hh}:{mm}", now_utc)
+    # Кнопка всегда имеет в виду "завтра" в это время
+    if publish_at and publish_at <= now_utc + timedelta(hours=1):
+        publish_at += timedelta(days=1)
+
+    when = await _do_schedule(bot, storage, scheduled, pid, publish_at)
+    await state.clear()
+    if when is None:
+        await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+    await callback.message.edit_text(f"🕒 Запланировано на {when} (Ташкент).")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("schedcancel:"))
+async def cb_schedule_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Отменено, пост остался в превью выше.")
+    await callback.answer()
+
+
+@router.message(ScheduleForm.waiting_time, F.text)
+async def receive_schedule_time(
+    message: Message, state: FSMContext, storage: Storage, scheduled: ScheduledStore, bot: Bot
+):
+    data = await state.get_data()
+    pid = data.get("pid")
+
+    publish_at = parse_tashkent_time(message.text)
+    if not publish_at:
+        await message.reply(
+            "Не понял время. Формат: `19:30` (ближайшее такое время) или `29.09 08:00`."
+        )
+        return
+
+    when = await _do_schedule(bot, storage, scheduled, pid, publish_at)
+    await state.clear()
+    if when is None:
+        await message.reply("Этот пост уже обработан.")
+        return
+    await message.reply(f"🕒 Запланировано на {when} (Ташкент).")

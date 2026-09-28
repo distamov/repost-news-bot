@@ -23,9 +23,27 @@ def preview_keyboard(pid: str, has_original: bool = False) -> InlineKeyboardMark
                 InlineKeyboardButton(text="🔄 Другое фото", callback_data=f"newphoto:{pid}"),
             ],
             extra_row,
+            [InlineKeyboardButton(text="🕒 Отложить", callback_data=f"sched:{pid}")],
             [
                 InlineKeyboardButton(text="✏️ Править текст", callback_data=f"edittext:{pid}"),
                 InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{pid}"),
             ],
+        ]
+    )
+
+
+def schedule_keyboard(pid: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="+1 час", callback_data=f"schedin:{pid}:60"),
+                InlineKeyboardButton(text="+3 часа", callback_data=f"schedin:{pid}:180"),
+                InlineKeyboardButton(text="+6 часов", callback_data=f"schedin:{pid}:360"),
+            ],
+            [
+                InlineKeyboardButton(text="Завтра 09:00", callback_data=f"schedat:{pid}:09:00"),
+                InlineKeyboardButton(text="Завтра 19:00", callback_data=f"schedat:{pid}:19:00"),
+            ],
+            [InlineKeyboardButton(text="✖️ Отмена", callback_data=f"schedcancel:{pid}")],
         ]
     )

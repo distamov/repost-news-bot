@@ -14,6 +14,8 @@ from .health import run_health_server
 from .llm import LLMService
 from .monitor import ChannelMonitor
 from .photos import PhotoService
+from .scheduled_store import ScheduledStore
+from .scheduler import run_scheduler
 from .sources_store import SourceStore
 from .storage import Storage
 
@@ -45,17 +47,19 @@ async def main():
     storage = Storage()
     channels = ChannelStore()
     sources = SourceStore()
+    scheduled = ScheduledStore()
 
     dp["llm"] = llm
     dp["photos"] = photos
     dp["storage"] = storage
     dp["channels"] = channels
     dp["sources"] = sources
+    dp["scheduled"] = scheduled
 
     await bot.delete_webhook(drop_pending_updates=True)
     await _notify_admins(bot, "✅ Бот запущен и работает")
 
-    tasks = [dp.start_polling(bot)]
+    tasks = [dp.start_polling(bot), run_scheduler(bot, scheduled)]
 
     if config.PORT:
         tasks.append(run_health_server(int(config.PORT)))
