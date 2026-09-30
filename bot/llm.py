@@ -4,6 +4,8 @@ import logging
 
 import httpx
 
+from .formatting import EMOJI_CATALOG
+
 logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUS_CODES = {429, 503}  # стоит повторить тот же запрос ещё раз
@@ -51,6 +53,7 @@ _LANGUAGE_LINES = {
 
 def _build_system_prompt(language: str) -> str:
     language_line = _LANGUAGE_LINES.get(language, _LANGUAGE_LINES["uz"])
+    emoji_options = " ".join(EMOJI_CATALOG.keys())
     return f"""Ты — редактор новостного Telegram-канала.
 Тебе присылают текст новости на любом языке (русский, английский, узбекский
 на латинице и т.д.), иногда вместе с фото к этой новости.
@@ -71,15 +74,22 @@ def _build_system_prompt(language: str) -> str:
    и разбивку на абзацы через пустую строку. Заголовок и КАЖДЫЙ абзац
    заканчивай БЕЗ точки в конце (без "." на конце строки).
 
-В самом конце, на отдельной строке после маркера ###KEYWORDS###, напиши
+В САМОМ КОНЦЕ ответа — два маркера, каждый на отдельной строке:
+
+###EMOJI###
+Один эмодзи из списка ниже, какой лучше всего подходит по смыслу именно
+этой новости (только сам эмодзи, без пояснений):
+{emoji_options}
+
+###KEYWORDS###
 3-6 английских слов через запятую для поиска ПОХОЖЕЙ (но другой, не той же
 самой) иллюстрации на фотостоке. Если к сообщению приложено фото — посмотри
 на него и опиши именно то, что на нём видно (люди, место, предметы,
 обстановка), чтобы найденное фото было похоже по содержанию на приложенное.
 Если фото не приложено — опиши ключевые слова по смыслу текста новости.
 
-Не пиши никаких пояснений от себя — только заголовок, текст новости, а затем
-ключевые слова."""
+Не пиши никаких пояснений от себя — только заголовок, текст новости, эмодзи
+и ключевые слова."""
 
 
 class LLMService:
@@ -96,7 +106,7 @@ class LLMService:
 
     async def rewrite_and_translate(
         self, source_text: str, photo_bytes: bytes | None = None, language: str = "uz"
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str | None]:
         parts = [{"text": source_text}]
         if photo_bytes:
             parts.insert(
@@ -146,12 +156,24 @@ class LLMService:
         data = response.json()
         raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-        if "###KEYWORDS###" in raw:
-            body, keywords = raw.split("###KEYWORDS###", 1)
-        else:
-            body, keywords = raw, "news"
+        emoji_choice = None
+        keywords = "news"
 
-        return body.strip(), keywords.strip()
+        if "###EMOJI###" in raw:
+            body, rest = raw.split("###EMOJI###", 1)
+            if "###KEYWORDS###" in rest:
+                emoji_part, keywords_part = rest.split("###KEYWORDS###", 1)
+                emoji_choice = emoji_part.strip()
+                keywords = keywords_part.strip()
+            else:
+                emoji_choice = rest.strip()
+        elif "###KEYWORDS###" in raw:
+            body, keywords_part = raw.split("###KEYWORDS###", 1)
+            keywords = keywords_part.strip()
+        else:
+            body = raw
+
+        return body.strip(), keywords, emoji_choice
 
     async def close(self):
         await self._client.aclose()

@@ -47,7 +47,7 @@ async def build_and_send_preview(
     original_media = original_media or []
 
     try:
-        rewritten, keywords = await llm.rewrite_and_translate(
+        rewritten, keywords, emoji_choice = await llm.rewrite_and_translate(
             source_text, photo_bytes, language=channel.language
         )
     except Exception:
@@ -66,7 +66,7 @@ async def build_and_send_preview(
     _consecutive_failures = 0
     _failure_alert_sent = False
 
-    text = build_post_html(rewritten, channel.signature)
+    text = build_post_html(rewritten, channel.signature, emoji_choice, source_text)
 
     try:
         photo_urls = await photos.search(keywords)
