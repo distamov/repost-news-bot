@@ -4,20 +4,20 @@ import time
 
 from aiogram import Bot
 
-from .posting import send_post
 from .scheduled_store import ScheduledStore
+from .telethon_posting import publish
 
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL = 30
 
 
-async def run_scheduler(bot: Bot, store: ScheduledStore):
+async def run_scheduler(bot: Bot, store: ScheduledStore, telethon_client=None):
     while True:
         for post in store.due(time.time()):
             try:
                 media = store.load_media(post)
-                await send_post(bot, post.target_chat_id, post.text, media=media)
+                await publish(bot, telethon_client, post.target_chat_id, post.text, media=media)
                 if post.moderation_chat_id:
                     try:
                         await bot.send_message(

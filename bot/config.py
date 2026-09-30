@@ -54,3 +54,12 @@ else:
     MODERATION_CHAT_ID = None
 
 MONITOR_ENABLED = bool(TELEGRAM_API_ID and TELEGRAM_API_HASH and TELEGRAM_SESSION)
+
+# Публиковать финальный пост в канал через Telethon-аккаунт (а не через
+# Bot API) — нужно только для анимации премиум-эмодзи, которую Bot API
+# не умеет слать в каналы вообще ни при каких условиях. Требует, чтобы
+# у аккаунта из TELEGRAM_SESSION были Telegram Premium и права публикации
+# в канале — иначе просто отвалится в Bot API автоматически (см.
+# bot/telethon_posting.py). Выключено по умолчанию, пока не подтверждены
+# оба условия.
+TELETHON_PUBLISH = os.environ.get("TELETHON_PUBLISH", "").strip().lower() in ("1", "true", "yes")

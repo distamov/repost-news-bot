@@ -18,6 +18,7 @@ from ..photos import PhotoService
 from ..pipeline import build_and_send_preview, resend_preview
 from ..posting import as_media_input, send_post
 from ..scheduled_store import QUEUE_INTERVAL_MINUTES, ScheduledStore, format_tashkent, parse_tashkent_time
+from ..telethon_posting import publish
 from ..storage import MediaItem, Storage
 
 router = Router()
@@ -257,7 +258,7 @@ async def cb_pick_cancel(callback: CallbackQuery, storage: Storage):
 
 
 @router.callback_query(F.data.startswith("approve:"))
-async def cb_approve(callback: CallbackQuery, storage: Storage, bot: Bot):
+async def cb_approve(callback: CallbackQuery, storage: Storage, bot: Bot, telethon_client=None):
     if not is_allowed(callback.from_user.id):
         await callback.answer("Нет прав.", show_alert=True)
         return
@@ -270,7 +271,7 @@ async def cb_approve(callback: CallbackQuery, storage: Storage, bot: Bot):
 
     media = item.media_options[item.option_index] if item.media_options else []
     try:
-        await send_post(bot, item.target_channel_id, item.text, media=media)
+        await publish(bot, telethon_client, item.target_channel_id, item.text, media=media)
     except Exception:
         logger.exception("Publish failed")
         await callback.answer(

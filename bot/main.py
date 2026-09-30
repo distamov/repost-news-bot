@@ -60,23 +60,8 @@ async def main():
     sources = SourceStore()
     scheduled = ScheduledStore()
 
-    dp["llm"] = llm
-    dp["photos"] = photos
-    dp["storage"] = storage
-    dp["channels"] = channels
-    dp["sources"] = sources
-    dp["scheduled"] = scheduled
-
-    await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_my_commands(BOT_COMMANDS)
-    await _notify_admins(bot, "✅ Бот запущен и работает")
-
-    tasks = [dp.start_polling(bot), run_scheduler(bot, scheduled)]
-
-    if config.PORT:
-        tasks.append(run_health_server(int(config.PORT)))
-
     monitor = None
+    telethon_client = None
     if config.MONITOR_ENABLED:
         monitor = ChannelMonitor(
             api_id=config.TELEGRAM_API_ID,
@@ -89,13 +74,33 @@ async def main():
             channels=channels,
             sources=sources,
         )
-        tasks.append(monitor.start())
+        telethon_client = monitor.client
     else:
         logger.warning(
             "Автомониторинг каналов выключен: заполни TELEGRAM_API_ID, "
             "TELEGRAM_API_HASH и TELEGRAM_SESSION в .env"
         )
+
+    dp["llm"] = llm
+    dp["photos"] = photos
+    dp["storage"] = storage
+    dp["channels"] = channels
+    dp["sources"] = sources
+    dp["scheduled"] = scheduled
     dp["monitor"] = monitor
+    dp["telethon_client"] = telethon_client
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_my_commands(BOT_COMMANDS)
+    await _notify_admins(bot, "✅ Бот запущен и работает")
+
+    tasks = [dp.start_polling(bot), run_scheduler(bot, scheduled, telethon_client)]
+
+    if config.PORT:
+        tasks.append(run_health_server(int(config.PORT)))
+
+    if monitor:
+        tasks.append(monitor.start())
 
     try:
         await asyncio.gather(*tasks)

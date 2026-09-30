@@ -7,13 +7,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from ..posting import send_post
 from ..scheduled_store import (
     QUEUE_INTERVAL_MINUTES,
     ScheduledStore,
     format_tashkent,
     parse_tashkent_time,
 )
+from ..telethon_posting import publish
 from .rewrite import is_allowed
 
 router = Router()
@@ -115,7 +115,7 @@ async def cb_view(callback: CallbackQuery, scheduled: ScheduledStore):
 
 
 @router.callback_query(F.data.startswith("spnow:"))
-async def cb_publish_now(callback: CallbackQuery, scheduled: ScheduledStore):
+async def cb_publish_now(callback: CallbackQuery, scheduled: ScheduledStore, telethon_client=None):
     if not is_allowed(callback.from_user.id):
         await callback.answer("Нет прав.", show_alert=True)
         return
@@ -126,7 +126,7 @@ async def cb_publish_now(callback: CallbackQuery, scheduled: ScheduledStore):
         return
     try:
         media = scheduled.load_media(post)
-        await send_post(callback.bot, post.target_chat_id, post.text, media=media)
+        await publish(callback.bot, telethon_client, post.target_chat_id, post.text, media=media)
     except Exception:
         await callback.answer(
             "Ошибка публикации. Проверь, что бот — админ в этом канале.", show_alert=True
