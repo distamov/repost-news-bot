@@ -55,7 +55,44 @@ SIGNATURE_EMOJI_MAP = {
 }
 
 
+_ANCHOR_RE = re.compile(r"<a\s+[^>]*>.*?</a>", re.DOTALL)
+
+
+def _hoist_emoji_out_of_link(match: re.Match) -> str:
+    """Telegram не анимирует custom-эмодзи, если он оказался внутри тега
+    <a> вместе с текстом ссылки — выносим такие эмодзи за пределы тега,
+    оставляя в ссылке только сам текст."""
+    tag = match.group(0)
+    open_end = tag.index(">") + 1
+    open_tag, inner, close_tag = tag[:open_end], tag[open_end:-4], tag[-4:]
+
+    prefix = ""
+    changed = True
+    while changed:
+        changed = False
+        for plain in SIGNATURE_EMOJI_MAP:
+            if inner.startswith(plain):
+                prefix += plain
+                inner = inner[len(plain):].lstrip()
+                changed = True
+
+    suffix = ""
+    changed = True
+    while changed:
+        changed = False
+        for plain in SIGNATURE_EMOJI_MAP:
+            if inner.endswith(plain):
+                suffix = plain + suffix
+                inner = inner[: -len(plain)].rstrip()
+                changed = True
+
+    prefix = f"{prefix} " if prefix else ""
+    suffix = f" {suffix}" if suffix else ""
+    return f"{prefix}{open_tag}{inner}{close_tag}{suffix}"
+
+
 def animate_signature(signature: str) -> str:
+    signature = _ANCHOR_RE.sub(_hoist_emoji_out_of_link, signature)
     for plain, emoji_id in SIGNATURE_EMOJI_MAP.items():
         signature = signature.replace(plain, f'<tg-emoji emoji-id="{emoji_id}">{plain}</tg-emoji>')
     return signature
