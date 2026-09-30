@@ -45,6 +45,21 @@ EMOJI_CATALOG = {
 _NORMALIZED_CATALOG = {k.replace("️", ""): k for k in EMOJI_CATALOG}
 _emoji_state = {"last_id": None, "fallback_index": -1}
 
+# Премиум-эмодзи для подписи канала (пак RestrictedEmoji,
+# t.me/addemoji/RestrictedEmoji) — подставляются вместо обычных везде,
+# где встречаются в тексте подписи (её задают в /channels). Если для
+# какого-то канала нужен другой флаг/значок — добавить сюда его ID.
+SIGNATURE_EMOJI_MAP = {
+    "👉": "5471978009449731768",
+    "🇺🇿": "5449829434334912605",
+}
+
+
+def animate_signature(signature: str) -> str:
+    for plain, emoji_id in SIGNATURE_EMOJI_MAP.items():
+        signature = signature.replace(plain, f'<tg-emoji emoji-id="{emoji_id}">{plain}</tg-emoji>')
+    return signature
+
 
 def _fix_known_typos(text: str) -> str:
     for pattern, replacement in _TYPO_FIXES.items():
@@ -155,6 +170,6 @@ def build_post_html(
     if paragraphs:
         parts.append("\n\n".join(html.escape(p) for p in paragraphs))
     if signature:
-        parts.append(signature)
+        parts.append(animate_signature(signature))
 
     return "\n\n".join(parts)
