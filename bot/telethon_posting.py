@@ -1,3 +1,4 @@
+import io
 import logging
 
 from aiogram import Bot
@@ -30,12 +31,20 @@ async def _to_bytes(item: MediaItem, bot: Bot) -> bytes:
     return buf.read()
 
 
+def _as_named_file(item: MediaItem, data: bytes):
+    """Telethon определяет фото/видео по расширению имени файла — голые
+    байты без имени он шлёт как безымянный документ, а не как фото/видео."""
+    named = io.BytesIO(data)
+    named.name = "photo.jpg" if item.kind == "photo" else "video.mp4"
+    return named
+
+
 async def _send_via_telethon(client, bot: Bot, chat_id, text: str, media: list[MediaItem]):
     if not media:
         await client.send_message(chat_id, text, parse_mode="html", link_preview=False)
         return
 
-    files = [await _to_bytes(item, bot) for item in media]
+    files = [_as_named_file(item, await _to_bytes(item, bot)) for item in media]
     caption = text if len(text) <= CAPTION_LIMIT else None
     parse_mode = "html" if caption else None
 
