@@ -4,6 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 
 from . import config
 from .channels_store import ChannelStore
@@ -21,6 +22,14 @@ from .sources_store import SourceStore
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
+
+BOT_COMMANDS = [
+    BotCommand(command="start", description="Как пользоваться ботом"),
+    BotCommand(command="rewrite", description="Переписать пост (ответом на сообщение)"),
+    BotCommand(command="channels", description="Каналы публикации: добавить/изменить"),
+    BotCommand(command="sources", description="Каналы-источники для автомониторинга"),
+    BotCommand(command="scheduled", description="Отложенные посты: список и управление"),
+]
 
 
 async def _notify_admins(bot: Bot, text: str):
@@ -59,6 +68,7 @@ async def main():
     dp["scheduled"] = scheduled
 
     await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_my_commands(BOT_COMMANDS)
     await _notify_admins(bot, "✅ Бот запущен и работает")
 
     tasks = [dp.start_polling(bot), run_scheduler(bot, scheduled)]
