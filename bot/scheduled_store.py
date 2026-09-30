@@ -146,6 +146,14 @@ class ScheduledStore:
     def get(self, pid: str) -> Optional[ScheduledPost]:
         return self._posts.get(pid)
 
+    def update_time(self, pid: str, publish_at_utc: datetime) -> Optional[ScheduledPost]:
+        post = self._posts.get(pid)
+        if not post:
+            return None
+        post.publish_at = publish_at_utc.timestamp()
+        self._save()
+        return post
+
     def remove(self, pid: str) -> None:
         self._posts.pop(pid, None)
         self._save()

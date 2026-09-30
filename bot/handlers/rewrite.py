@@ -57,8 +57,11 @@ async def cmd_start(message: Message):
         "3. Я пришлю превью с фото и кнопками: «Другое фото» — пролистать\n"
         "   варианты, «Оригинал» — вернуть исходное фото/видео поста,\n"
         "   «Своё фото/видео» — прислать своё\n"
-        "4. Нажми «Опубликовать» — и пост уйдёт в выбранный канал\n\n"
-        "Каналами публикации управляй командой /channels"
+        "4. Нажми «Опубликовать» — и пост уйдёт в выбранный канал, или "
+        "«🕒 Отложить» — чтобы выйти позже\n\n"
+        "Каналами публикации управляй командой /channels\n"
+        "Отложенными постами (изменить время, выложить сейчас, удалить) — "
+        "командой /scheduled"
     )
 
 
@@ -517,7 +520,7 @@ async def cb_schedule_queue(
     if when is None:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
-    await callback.message.edit_text(f"📥 Добавлено в очередь — выйдет в {when} (Ташкент).")
+    await callback.message.edit_text(f"📥 Добавлено в очередь — выйдет в {when} (Ташкент).\n/scheduled — посмотреть очередь")
     await callback.answer()
 
 
@@ -536,7 +539,7 @@ async def cb_schedule_in(
     if when is None:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
-    await callback.message.edit_text(f"🕒 Запланировано на {when} (Ташкент).")
+    await callback.message.edit_text(f"🕒 Запланировано на {when} (Ташкент).\n/scheduled — посмотреть очередь")
     await callback.answer()
 
 
@@ -560,7 +563,7 @@ async def cb_schedule_at(
     if when is None:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
-    await callback.message.edit_text(f"🕒 Запланировано на {when} (Ташкент).")
+    await callback.message.edit_text(f"🕒 Запланировано на {when} (Ташкент).\n/scheduled — посмотреть очередь")
     await callback.answer()
 
 
@@ -590,4 +593,4 @@ async def receive_schedule_time(
     if when is None:
         await message.reply("Этот пост уже обработан.")
         return
-    await message.reply(f"🕒 Запланировано на {when} (Ташкент).")
+    await message.reply(f"🕒 Запланировано на {when} (Ташкент).\n/scheduled — посмотреть очередь")

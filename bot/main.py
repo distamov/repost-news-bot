@@ -9,6 +9,7 @@ from . import config
 from .channels_store import ChannelStore
 from .handlers.channels import router as channels_router
 from .handlers.rewrite import router as rewrite_router
+from .handlers.scheduled import router as scheduled_router
 from .handlers.sources import router as sources_router
 from .health import run_health_server
 from .llm import LLMService
@@ -40,6 +41,7 @@ async def main():
     dp = Dispatcher()
     dp.include_router(channels_router)
     dp.include_router(sources_router)
+    dp.include_router(scheduled_router)
     dp.include_router(rewrite_router)
 
     llm = LLMService(config.GEMINI_API_KEY, config.GEMINI_MODEL)
