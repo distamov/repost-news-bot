@@ -1,3 +1,4 @@
+import html
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -106,9 +107,13 @@ async def cb_view(callback: CallbackQuery, scheduled: ScheduledStore):
         await _show_list(callback.message, scheduled)
         return
     when = format_tashkent(datetime.fromtimestamp(post.publish_at, tz=timezone.utc))
-    preview = post.text if len(post.text) < 500 else post.text[:500] + "…"
+    # Режем HTML-теги ДО обрезки по длине — иначе обрезка может разорвать
+    # тег пополам (например <tg-emoji ...>), и Telegram отклонит
+    # сообщение целиком с ошибкой парсинга, а кнопка просто не ответит.
+    plain = _TAG_RE.sub("", post.text).strip()
+    preview = plain if len(plain) < 500 else plain[:500] + "…"
     await callback.message.edit_text(
-        f"🕒 Выйдет: {when} (Ташкент)\n\n{preview}",
+        f"🕒 Выйдет: {when} (Ташкент)\n\n{html.escape(preview)}",
         reply_markup=_detail_keyboard(pid),
     )
     await callback.answer()
