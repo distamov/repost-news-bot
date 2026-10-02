@@ -152,6 +152,11 @@ class LLMService:
                 )
                 await asyncio.sleep(ROUND_PAUSE)
 
+        if response.status_code >= 400:
+            logger.error(
+                "Gemini API вернул %s для модели %s: %s",
+                response.status_code, model, response.text[:2000],
+            )
         response.raise_for_status()
         data = response.json()
         raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
