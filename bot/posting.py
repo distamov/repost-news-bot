@@ -8,7 +8,8 @@ CAPTION_LIMIT = 1024
 
 def as_media_input(item: MediaItem):
     if isinstance(item.data, bytes):
-        return BufferedInputFile(item.data, filename="media")
+        filename = "photo.jpg" if item.kind == "photo" else "video.mp4"
+        return BufferedInputFile(item.data, filename=filename)
     return item.data
 
 
