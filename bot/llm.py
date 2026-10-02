@@ -9,7 +9,7 @@ from .formatting import EMOJI_CATALOG
 logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUS_CODES = {429, 503}  # стоит повторить тот же запрос ещё раз
-MODEL_FALLBACK_CODES = {404, 429, 503}  # стоит попробовать следующую модель
+MODEL_FALLBACK_CODES = {400, 404, 429, 503}  # стоит попробовать следующую модель
 RETRY_DELAYS = (3,)  # один быстрый повтор той же модели, дальше — следующая модель
 
 # Перегрузка у Google волнами: бывает, что все модели из списка недоступны
@@ -138,7 +138,8 @@ class LLMService:
 
                 if response.status_code in MODEL_FALLBACK_CODES:
                     logger.warning(
-                        "Модель %s недоступна (%s), пробую следующую", model, response.status_code
+                        "Модель %s недоступна (%s), пробую следующую: %s",
+                        model, response.status_code, response.text[:500],
                     )
                     continue
                 got_response = True
