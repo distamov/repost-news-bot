@@ -53,7 +53,7 @@ async def main():
     dp.include_router(scheduled_router)
     dp.include_router(rewrite_router)
 
-    llm = LLMService(config.GEMINI_API_KEY, config.GEMINI_MODEL)
+    llm = LLMService(config.GEMINI_API_KEY, config.GEMINI_MODEL, base_url=config.GEMINI_BASE_URL)
     photos = PhotoService(config.PEXELS_API_KEY, config.PIXABAY_API_KEY)
     storage = Storage()
     channels = ChannelStore()

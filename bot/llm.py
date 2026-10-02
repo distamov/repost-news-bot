@@ -95,11 +95,11 @@ def _build_system_prompt(language: str) -> str:
 class LLMService:
     """Рерайт и перевод через Gemini API (generativelanguage.googleapis.com)."""
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, base_url: str | None = None):
         self.model = model
         self._models = (model, *(m for m in FALLBACK_MODELS if m != model))
         self._client = httpx.AsyncClient(
-            base_url="https://generativelanguage.googleapis.com/v1beta",
+            base_url=base_url or "https://generativelanguage.googleapis.com/v1beta",
             params={"key": api_key},
             timeout=60,
         )

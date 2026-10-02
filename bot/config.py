@@ -26,6 +26,13 @@ PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "")
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 
+# Если IP этого сервера попал у Google под ошибочную гео-блокировку
+# ("User location is not supported for the API use") — запросы к Gemini
+# можно пустить через прокси (например, свой Cloudflare Worker), указав
+# сюда его адрес вместо прямого обращения к generativelanguage.googleapis.com.
+# Прокси должен принимать те же пути (/v1beta/...) и параметры запроса.
+GEMINI_BASE_URL = os.environ.get("GEMINI_BASE_URL", "").strip().rstrip("/") or None
+
 # Список каналов публикации теперь хранится и управляется через
 # bot/channels_store.py (команда /channels в боте), а не .env — CHANNEL_N_*
 # переменные используются только для самой первой загрузки, один раз.
