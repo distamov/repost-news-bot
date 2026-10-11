@@ -90,6 +90,10 @@ async def main():
         )
         try:
             await client.start()
+            me = await client.get_me()
+            logger.info(
+                "Доп. аккаунт для реакций подключён: %s (@%s)", me.first_name, me.username
+            )
             extra_reaction_clients.append(client)
         except Exception:
             logger.exception("Не удалось подключить дополнительный аккаунт для реакций")
