@@ -69,20 +69,29 @@ async def _send_via_telethon(client, bot: Bot, chat_id, text: str, media: list[M
     return primary.id
 
 
-async def _react(telethon_client, chat_id, message_id):
+async def _react(telethon_client, chat_id, message_id, emojis: list[str] | None = None):
+    emojis = emojis or REACTION_EMOJIS
     try:
+        peer = await telethon_client.get_input_entity(chat_id)
         await telethon_client(
             SendReactionRequest(
-                peer=chat_id,
+                peer=peer,
                 msg_id=message_id,
-                reaction=[ReactionEmoji(emoticon=e) for e in REACTION_EMOJIS],
+                reaction=[ReactionEmoji(emoticon=e) for e in emojis],
             )
         )
     except Exception:
         logger.exception("Не удалось поставить реакции на пост %s в %s", message_id, chat_id)
 
 
-async def publish(bot: Bot, telethon_client, chat_id, text: str, media: list[MediaItem] | None = None):
+async def publish(
+    bot: Bot,
+    telethon_client,
+    chat_id,
+    text: str,
+    media: list[MediaItem] | None = None,
+    extra_reaction_clients: list | None = None,
+):
     """Публикует финальный пост в канал. Если включён TELETHON_PUBLISH и
     Telethon-аккаунт доступен — публикует через него (Bot API не умеет
     слать анимированные премиум-эмодзи в каналы вообще, а обычный
@@ -92,7 +101,9 @@ async def publish(bot: Bot, telethon_client, chat_id, text: str, media: list[Med
 
     После публикации, если Telethon-аккаунт доступен, сразу ставит от его
     имени набор реакций на пост — независимо от того, каким способом сам
-    пост был опубликован."""
+    пост был опубликован. Дополнительные (не Premium) аккаунты из
+    extra_reaction_clients ставят следом по одной реакции ❤️ каждый — им,
+    в отличие от Premium-аккаунта, недоступно несколько реакций сразу."""
     media = media or []
     message_id = None
 
@@ -108,5 +119,11 @@ async def publish(bot: Bot, telethon_client, chat_id, text: str, media: list[Med
         media_message_ids, text_message_id = await send_post(bot, chat_id, text, media=media)
         message_id = media_message_ids[0] if media_message_ids else text_message_id
 
-    if telethon_client and message_id is not None:
+    if message_id is None:
+        return
+
+    if telethon_client:
         await _react(telethon_client, chat_id, message_id)
+
+    for extra_client in extra_reaction_clients or []:
+        await _react(extra_client, chat_id, message_id, emojis=["❤️"])

@@ -12,12 +12,21 @@ logger = logging.getLogger(__name__)
 CHECK_INTERVAL = 30
 
 
-async def run_scheduler(bot: Bot, store: ScheduledStore, telethon_client=None):
+async def run_scheduler(
+    bot: Bot, store: ScheduledStore, telethon_client=None, extra_reaction_clients=None
+):
     while True:
         for post in store.due(time.time()):
             try:
                 media = store.load_media(post)
-                await publish(bot, telethon_client, post.target_chat_id, post.text, media=media)
+                await publish(
+                    bot,
+                    telethon_client,
+                    post.target_chat_id,
+                    post.text,
+                    media=media,
+                    extra_reaction_clients=extra_reaction_clients,
+                )
                 if post.moderation_chat_id:
                     try:
                         await bot.send_message(

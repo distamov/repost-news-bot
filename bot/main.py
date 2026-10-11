@@ -5,6 +5,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
+from telethon import TelegramClient
+from telethon.sessions import StringSession
 
 from . import config
 from .channels_store import ChannelStore
@@ -81,6 +83,17 @@ async def main():
             "TELEGRAM_API_HASH и TELEGRAM_SESSION в .env"
         )
 
+    extra_reaction_clients = []
+    for session_str in config.TELEGRAM_EXTRA_SESSIONS:
+        client = TelegramClient(
+            StringSession(session_str), config.TELEGRAM_API_ID, config.TELEGRAM_API_HASH
+        )
+        try:
+            await client.start()
+            extra_reaction_clients.append(client)
+        except Exception:
+            logger.exception("Не удалось подключить дополнительный аккаунт для реакций")
+
     dp["llm"] = llm
     dp["photos"] = photos
     dp["storage"] = storage
@@ -89,12 +102,16 @@ async def main():
     dp["scheduled"] = scheduled
     dp["monitor"] = monitor
     dp["telethon_client"] = telethon_client
+    dp["extra_reaction_clients"] = extra_reaction_clients
 
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_my_commands(BOT_COMMANDS)
     await _notify_admins(bot, "✅ Бот запущен и работает")
 
-    tasks = [dp.start_polling(bot), run_scheduler(bot, scheduled, telethon_client)]
+    tasks = [
+        dp.start_polling(bot),
+        run_scheduler(bot, scheduled, telethon_client, extra_reaction_clients),
+    ]
 
     if config.PORT:
         tasks.append(run_health_server(int(config.PORT)))
@@ -111,6 +128,8 @@ async def main():
     finally:
         await photos.close()
         await llm.close()
+        for client in extra_reaction_clients:
+            await client.disconnect()
 
 
 if __name__ == "__main__":

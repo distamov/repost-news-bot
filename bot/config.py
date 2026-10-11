@@ -70,3 +70,11 @@ MONITOR_ENABLED = bool(TELEGRAM_API_ID and TELEGRAM_API_HASH and TELEGRAM_SESSIO
 # bot/telethon_posting.py). Выключено по умолчанию, пока не подтверждены
 # оба условия.
 TELETHON_PUBLISH = os.environ.get("TELETHON_PUBLISH", "").strip().lower() in ("1", "true", "yes")
+
+# Дополнительные аккаунты (без Premium), которые после публикации поста
+# ставят на него одну реакцию ❤️ каждый — просто для "живости" поста.
+# Session-строки получаются через scripts/generate_session.py, используют
+# те же TELEGRAM_API_ID/TELEGRAM_API_HASH, перечисляются через запятую.
+# Каждый из этих аккаунтов должен быть подписан на канал публикации.
+_extra_sessions_raw = os.environ.get("TELEGRAM_EXTRA_SESSIONS", "")
+TELEGRAM_EXTRA_SESSIONS = [s.strip() for s in _extra_sessions_raw.split(",") if s.strip()]

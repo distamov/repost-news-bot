@@ -120,7 +120,12 @@ async def cb_view(callback: CallbackQuery, scheduled: ScheduledStore):
 
 
 @router.callback_query(F.data.startswith("spnow:"))
-async def cb_publish_now(callback: CallbackQuery, scheduled: ScheduledStore, telethon_client=None):
+async def cb_publish_now(
+    callback: CallbackQuery,
+    scheduled: ScheduledStore,
+    telethon_client=None,
+    extra_reaction_clients=None,
+):
     if not is_allowed(callback.from_user.id):
         await callback.answer("Нет прав.", show_alert=True)
         return
@@ -131,7 +136,14 @@ async def cb_publish_now(callback: CallbackQuery, scheduled: ScheduledStore, tel
         return
     try:
         media = scheduled.load_media(post)
-        await publish(callback.bot, telethon_client, post.target_chat_id, post.text, media=media)
+        await publish(
+            callback.bot,
+            telethon_client,
+            post.target_chat_id,
+            post.text,
+            media=media,
+            extra_reaction_clients=extra_reaction_clients,
+        )
     except Exception:
         await callback.answer(
             "Ошибка публикации. Проверь, что бот — админ в этом канале.", show_alert=True

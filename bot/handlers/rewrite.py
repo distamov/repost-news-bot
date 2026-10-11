@@ -258,7 +258,13 @@ async def cb_pick_cancel(callback: CallbackQuery, storage: Storage):
 
 
 @router.callback_query(F.data.startswith("approve:"))
-async def cb_approve(callback: CallbackQuery, storage: Storage, bot: Bot, telethon_client=None):
+async def cb_approve(
+    callback: CallbackQuery,
+    storage: Storage,
+    bot: Bot,
+    telethon_client=None,
+    extra_reaction_clients=None,
+):
     if not is_allowed(callback.from_user.id):
         await callback.answer("Нет прав.", show_alert=True)
         return
@@ -271,7 +277,14 @@ async def cb_approve(callback: CallbackQuery, storage: Storage, bot: Bot, teleth
 
     media = item.media_options[item.option_index] if item.media_options else []
     try:
-        await publish(bot, telethon_client, item.target_channel_id, item.text, media=media)
+        await publish(
+            bot,
+            telethon_client,
+            item.target_channel_id,
+            item.text,
+            media=media,
+            extra_reaction_clients=extra_reaction_clients,
+        )
     except Exception:
         logger.exception("Publish failed")
         await callback.answer(
