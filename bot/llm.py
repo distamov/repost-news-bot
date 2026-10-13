@@ -129,17 +129,28 @@ class LLMService:
             got_response = False
             for model in self._models:
                 for attempt, delay in enumerate((*RETRY_DELAYS, None)):
-                    response = await self._client.post(
-                        f"/models/{model}:generateContent", json=payload
-                    )
+                    try:
+                        response = await self._client.post(
+                            f"/models/{model}:generateContent", json=payload
+                        )
+                    except httpx.TransportError:
+                        logger.warning(
+                            "Сетевая ошибка/таймаут при обращении к модели %s", model
+                        )
+                        response = None
+                        if delay is not None:
+                            await asyncio.sleep(delay)
+                        continue
                     if response.status_code not in RETRYABLE_STATUS_CODES or delay is None:
                         break
                     await asyncio.sleep(delay)
 
-                if response.status_code in MODEL_FALLBACK_CODES:
+                if response is None or response.status_code in MODEL_FALLBACK_CODES:
                     logger.warning(
                         "Модель %s недоступна (%s), пробую следующую: %s",
-                        model, response.status_code, response.text[:500],
+                        model,
+                        response.status_code if response else "нет ответа/таймаут",
+                        response.text[:500] if response else "",
                     )
                     continue
                 got_response = True
@@ -153,6 +164,8 @@ class LLMService:
                 )
                 await asyncio.sleep(ROUND_PAUSE)
 
+        if response is None:
+            raise RuntimeError("Gemini API недоступен: все попытки завершились таймаутом")
         if response.status_code >= 400:
             logger.error(
                 "Gemini API вернул %s для модели %s: %s",
