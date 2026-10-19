@@ -3,8 +3,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def channel_picker_keyboard(selection_id: str, channels) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=channel.label, callback_data=f"pick:{selection_id}:{i}")]
-        for i, channel in enumerate(channels)
+        [InlineKeyboardButton(text=channel.label, callback_data=f"pick:{selection_id}:{channel.uid}")]
+        for channel in channels
     ]
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data=f"pickcancel:{selection_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

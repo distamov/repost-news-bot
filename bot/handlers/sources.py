@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telethon.tl.functions.channels import JoinChannelRequest
 
-from ..sources_store import SourceStore, extract_username
+from ..sources_store import SourceConfig, SourceStore, extract_username
 from .rewrite import is_allowed
 
 router = Router()
@@ -15,13 +15,13 @@ class SourceForm(StatesGroup):
     waiting_id = State()
 
 
-def _sources_menu(sources: SourceStore) -> InlineKeyboardMarkup:
+def _sources_menu(source_list: list[SourceConfig]) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(text=s.id, callback_data="noop"),
-            InlineKeyboardButton(text="🗑", callback_data=f"srcdel:{i}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"srcdel:{s.uid}"),
         ]
-        for i, s in enumerate(sources.all())
+        for s in source_list
     ]
     rows.append([InlineKeyboardButton(text="➕ Добавить источник", callback_data="srcadd")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -32,8 +32,9 @@ async def cmd_sources(message: Message, sources: SourceStore):
     if not is_allowed(message.from_user.id):
         await message.reply("У вас нет прав.")
         return
-    text = "Каналы-источники (мониторинг):" if sources.all() else "Источников пока нет."
-    await message.answer(text, reply_markup=_sources_menu(sources))
+    source_list = sources.all_for(message.from_user.id)
+    text = "Твои каналы-источники (мониторинг):" if source_list else "Источников пока нет."
+    await message.answer(text, reply_markup=_sources_menu(source_list))
 
 
 @router.callback_query(F.data == "noop")
@@ -60,7 +61,7 @@ async def form_source_id(message: Message, state: FSMContext, sources: SourceSto
     added = []
     for raw in raw_items:
         username = extract_username(raw)
-        sources.add(username)
+        sources.add(username, owner_id=message.from_user.id)
         added.append(username)
         if monitor is not None:
             try:
@@ -75,8 +76,9 @@ async def form_source_id(message: Message, state: FSMContext, sources: SourceSto
         else "\n\n⚠️ Автомониторинг сейчас выключен (не заполнены TELEGRAM_* в .env) — "
         "список сохранён, но отслеживать эти каналы бот не будет, пока мониторинг не включён."
     )
+    source_list = sources.all_for(message.from_user.id)
     await message.reply(
-        f"Добавлено: {', '.join(added)}{note}", reply_markup=_sources_menu(sources)
+        f"Добавлено: {', '.join(added)}{note}", reply_markup=_sources_menu(source_list)
     )
 
 
@@ -85,8 +87,13 @@ async def cb_source_delete(callback: CallbackQuery, sources: SourceStore):
     if not is_allowed(callback.from_user.id):
         await callback.answer("Нет прав.", show_alert=True)
         return
-    idx = int(callback.data.split(":", 1)[1])
-    sources.remove(idx)
+    uid = callback.data.split(":", 1)[1]
+    s = sources.get_by_uid(uid)
+    if not s or s.owner_id != callback.from_user.id:
+        await callback.answer("Источник не найден.", show_alert=True)
+        return
+    sources.remove_by_uid(uid)
     await callback.message.edit_text("Источник удалён ✅")
-    await callback.message.answer("Каналы-источники:", reply_markup=_sources_menu(sources))
+    source_list = sources.all_for(callback.from_user.id)
+    await callback.message.answer("Твои каналы-источники:", reply_markup=_sources_menu(source_list))
     await callback.answer()

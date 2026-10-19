@@ -9,15 +9,18 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 from . import config
+from .admins_store import AdminStore
 from .channels_store import ChannelStore
+from .handlers.admins import router as admins_router
 from .handlers.channels import router as channels_router
-from .handlers.rewrite import router as rewrite_router
+from .handlers.rewrite import init_admin_store, router as rewrite_router
 from .handlers.scheduled import router as scheduled_router
 from .handlers.sources import router as sources_router
 from .health import run_health_server
 from .llm import LLMService
 from .monitor import ChannelMonitor
 from .photos import PhotoService
+from .pipeline import init_admin_store as init_pipeline_admin_store
 from .scheduled_store import ScheduledStore
 from .scheduler import run_scheduler
 from .sources_store import SourceStore
@@ -31,11 +34,12 @@ BOT_COMMANDS = [
     BotCommand(command="channels", description="Каналы публикации: добавить/изменить"),
     BotCommand(command="sources", description="Каналы-источники для автомониторинга"),
     BotCommand(command="scheduled", description="Отложенные посты: список и управление"),
+    BotCommand(command="admins", description="Управление админами (только супер-админ)"),
 ]
 
 
-async def _notify_admins(bot: Bot, text: str):
-    for admin_id in config.ADMIN_IDS:
+async def _notify_admins(bot: Bot, text: str, admins: AdminStore):
+    for admin_id in admins.ids():
         try:
             await bot.send_message(admin_id, text)
         except Exception:
@@ -50,16 +54,22 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
+    dp.include_router(admins_router)
     dp.include_router(channels_router)
     dp.include_router(sources_router)
     dp.include_router(scheduled_router)
     dp.include_router(rewrite_router)
 
+    admins = AdminStore()
+    init_admin_store(admins)
+    init_pipeline_admin_store(admins)
+    default_owner_id = admins.ids()[0] if admins.ids() else 0
+
     llm = LLMService(config.GEMINI_API_KEY, config.GEMINI_MODEL, base_url=config.GEMINI_BASE_URL)
     photos = PhotoService(config.PEXELS_API_KEY, config.PIXABAY_API_KEY)
     storage = Storage()
-    channels = ChannelStore()
-    sources = SourceStore()
+    channels = ChannelStore(default_owner_id=default_owner_id)
+    sources = SourceStore(default_owner_id=default_owner_id)
     scheduled = ScheduledStore()
 
     monitor = None
@@ -104,13 +114,14 @@ async def main():
     dp["channels"] = channels
     dp["sources"] = sources
     dp["scheduled"] = scheduled
+    dp["admins"] = admins
     dp["monitor"] = monitor
     dp["telethon_client"] = telethon_client
     dp["extra_reaction_clients"] = extra_reaction_clients
 
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_my_commands(BOT_COMMANDS)
-    await _notify_admins(bot, "✅ Бот запущен и работает")
+    await _notify_admins(bot, "✅ Бот запущен и работает", admins)
 
     tasks = [
         dp.start_polling(bot),
@@ -127,7 +138,7 @@ async def main():
         await asyncio.gather(*tasks)
     except Exception as e:
         logger.exception("Бот упал")
-        await _notify_admins(bot, f"🔴 Бот упал с ошибкой: {e}\nПроверь логи на сервере.")
+        await _notify_admins(bot, f"🔴 Бот упал с ошибкой: {e}\nПроверь логи на сервере.", admins)
         raise
     finally:
         await photos.close()

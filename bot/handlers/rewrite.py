@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaVideo, Messa
 
 from datetime import datetime, timedelta, timezone
 
+from ..admins_store import AdminStore
 from ..channels_store import ChannelStore
 from ..config import ADMIN_IDS
 from ..formatting import build_post_html
@@ -42,7 +43,17 @@ class ScheduleForm(StatesGroup):
     waiting_time = State()
 
 
+_admin_store: AdminStore | None = None
+
+
+def init_admin_store(store: AdminStore) -> None:
+    global _admin_store
+    _admin_store = store
+
+
 def is_allowed(user_id: int) -> bool:
+    if _admin_store is not None:
+        return _admin_store.is_admin(user_id)
     return not ADMIN_IDS or user_id in ADMIN_IDS
 
 
@@ -123,6 +134,7 @@ async def _finalize_custom_upload(bot: Bot, storage: Storage, item, media_items:
         return
     item.media_options.append(media_items)
     item.option_index = len(item.media_options) - 1
+    storage.save(item.id)
     await resend_preview(bot, storage, item, media_items)
 
 
@@ -178,7 +190,7 @@ async def cmd_rewrite(
         except Exception:
             logger.exception("Не удалось скачать фото исходного поста для анализа")
 
-    all_channels = channels.all()
+    all_channels = channels.all_for(message.from_user.id)
 
     if len(all_channels) == 1:
         await message.reply(f"⏳ Готовлю пост для «{all_channels[0].label}»...")
@@ -192,6 +204,7 @@ async def cmd_rewrite(
             source_photo_bytes,
             message.chat.id,
             original_media=original_media,
+            requester_id=message.from_user.id,
         )
         return
 
@@ -221,14 +234,14 @@ async def cb_pick_channel(
         await callback.answer("Нет прав.", show_alert=True)
         return
 
-    _, sid, idx_str = callback.data.split(":", 2)
+    _, sid, uid = callback.data.split(":", 2)
     selection = storage.get_selection(sid)
     if not selection:
         await callback.answer("Это меню уже неактуально.", show_alert=True)
         return
 
-    channel = channels.get(int(idx_str))
-    if not channel:
+    channel = channels.get_by_uid(uid)
+    if not channel or channel.owner_id != callback.from_user.id:
         await callback.answer("Канал не найден.", show_alert=True)
         return
 
@@ -245,6 +258,7 @@ async def cb_pick_channel(
         selection.photo_bytes,
         selection.chat_id,
         original_media=selection.original_media,
+        requester_id=callback.from_user.id,
     )
     await callback.answer()
 
@@ -273,6 +287,9 @@ async def cb_approve(
     item = storage.get(pid)
     if not item:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+    if item.requester_id and item.requester_id != callback.from_user.id:
+        await callback.answer("Это не ваш пост.", show_alert=True)
         return
 
     media = item.media_options[item.option_index] if item.media_options else []
@@ -306,6 +323,14 @@ async def cb_reject(callback: CallbackQuery, storage: Storage):
         return
 
     pid = callback.data.split(":", 1)[1]
+    item = storage.get(pid)
+    if not item:
+        await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+    if item.requester_id and item.requester_id != callback.from_user.id:
+        await callback.answer("Это не ваш пост.", show_alert=True)
+        return
+
     storage.delete(pid)
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.reply("❌ Отклонено.")
@@ -342,11 +367,15 @@ async def cb_newphoto(callback: CallbackQuery, storage: Storage, bot: Bot):
     if not item:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
+    if item.requester_id and item.requester_id != callback.from_user.id:
+        await callback.answer("Это не ваш пост.", show_alert=True)
+        return
     if not item.media_options:
         await callback.answer("Других вариантов не найдено.", show_alert=True)
         return
 
     item.option_index = (item.option_index + 1) % len(item.media_options)
+    storage.save(item.id)
     await _apply_media_option(bot, storage, item, item.media_options[item.option_index])
     await callback.answer("Медиа обновлено.")
 
@@ -362,8 +391,12 @@ async def cb_use_original(callback: CallbackQuery, storage: Storage, bot: Bot):
     if not item or not item.has_original:
         await callback.answer("Оригинал недоступен.", show_alert=True)
         return
+    if item.requester_id and item.requester_id != callback.from_user.id:
+        await callback.answer("Это не ваш пост.", show_alert=True)
+        return
 
     item.option_index = len(item.media_options) - 1
+    storage.save(item.id)
     await _apply_media_option(bot, storage, item, item.media_options[item.option_index])
     await callback.answer("Оставляю оригинал.")
 
@@ -386,8 +419,12 @@ async def cb_edit_text(callback: CallbackQuery, storage: Storage, state: FSMCont
         return
 
     pid = callback.data.split(":", 1)[1]
-    if not storage.get(pid):
+    item = storage.get(pid)
+    if not item:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+    if item.requester_id and item.requester_id != callback.from_user.id:
+        await callback.answer("Это не ваш пост.", show_alert=True)
         return
 
     await state.set_state(EditTextForm.waiting_text)
@@ -411,6 +448,7 @@ async def receive_edited_text(message: Message, state: FSMContext, storage: Stor
         return
 
     item.text = build_post_html(message.text, item.signature)
+    storage.save(item.id)
     media = item.media_options[item.option_index] if item.media_options else []
     await resend_preview(bot, storage, item, media)
     await message.reply("Текст обновлён ✅")
@@ -443,7 +481,7 @@ async def cb_dup_proceed(
         await callback.answer("Уже обработано.", show_alert=True)
         return
 
-    all_channels = channels.all()
+    all_channels = channels.all_for(callback.from_user.id)
 
     if len(all_channels) == 1:
         storage.delete_selection(sid)
@@ -458,6 +496,7 @@ async def cb_dup_proceed(
             selection.photo_bytes,
             selection.chat_id,
             original_media=selection.original_media,
+            requester_id=callback.from_user.id,
         )
     else:
         await callback.message.edit_text("Для какого канала готовим пост?")
@@ -474,8 +513,12 @@ async def cb_schedule_menu(callback: CallbackQuery, storage: Storage, state: FSM
         return
 
     pid = callback.data.split(":", 1)[1]
-    if not storage.get(pid):
+    item = storage.get(pid)
+    if not item:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
+    if item.requester_id and item.requester_id != callback.from_user.id:
+        await callback.answer("Это не ваш пост.", show_alert=True)
         return
 
     await state.set_state(ScheduleForm.waiting_time)
@@ -488,9 +531,13 @@ async def cb_schedule_menu(callback: CallbackQuery, storage: Storage, state: FSM
     await callback.answer()
 
 
-async def _do_schedule(bot: Bot, storage: Storage, scheduled: ScheduledStore, pid: str, publish_at):
+async def _do_schedule(
+    bot: Bot, storage: Storage, scheduled: ScheduledStore, pid: str, publish_at, caller_id: int = None
+):
     item = storage.get(pid)
     if not item:
+        return None
+    if caller_id is not None and item.requester_id and item.requester_id != caller_id:
         return None
     media = item.media_options[item.option_index] if item.media_options else []
     scheduled.add(
@@ -499,6 +546,7 @@ async def _do_schedule(bot: Bot, storage: Storage, scheduled: ScheduledStore, pi
         media=media,
         publish_at_utc=publish_at,
         moderation_chat_id=item.chat_id,
+        owner_id=item.requester_id,
     )
     storage.delete(pid)
     try:
@@ -529,7 +577,7 @@ async def cb_schedule_queue(
     base = max(datetime.fromtimestamp(last_ts, tz=timezone.utc), now_utc) if last_ts else now_utc
     publish_at = base + timedelta(minutes=QUEUE_INTERVAL_MINUTES)
 
-    when = await _do_schedule(bot, storage, scheduled, pid, publish_at)
+    when = await _do_schedule(bot, storage, scheduled, pid, publish_at, caller_id=callback.from_user.id)
     await state.clear()
     if when is None:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
@@ -548,7 +596,7 @@ async def cb_schedule_in(
 
     _, pid, minutes_str = callback.data.split(":", 2)
     publish_at = datetime.now(timezone.utc) + timedelta(minutes=int(minutes_str))
-    when = await _do_schedule(bot, storage, scheduled, pid, publish_at)
+    when = await _do_schedule(bot, storage, scheduled, pid, publish_at, caller_id=callback.from_user.id)
     await state.clear()
     if when is None:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
@@ -572,7 +620,7 @@ async def cb_schedule_at(
     if publish_at and publish_at <= now_utc + timedelta(hours=1):
         publish_at += timedelta(days=1)
 
-    when = await _do_schedule(bot, storage, scheduled, pid, publish_at)
+    when = await _do_schedule(bot, storage, scheduled, pid, publish_at, caller_id=callback.from_user.id)
     await state.clear()
     if when is None:
         await callback.answer("Этот пост уже обработан.", show_alert=True)
@@ -602,7 +650,7 @@ async def receive_schedule_time(
         )
         return
 
-    when = await _do_schedule(bot, storage, scheduled, pid, publish_at)
+    when = await _do_schedule(bot, storage, scheduled, pid, publish_at, caller_id=message.from_user.id)
     await state.clear()
     if when is None:
         await message.reply("Этот пост уже обработан.")

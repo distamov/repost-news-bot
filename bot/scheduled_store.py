@@ -71,6 +71,7 @@ class ScheduledPost:
     publish_at: float = 0.0  # unix timestamp, UTC
     moderation_chat_id: Optional[int] = None
     moderation_message_id: Optional[int] = None
+    owner_id: int = 0  # telegram user id админа, поставившего пост в очередь
 
 
 class ScheduledStore:
@@ -99,6 +100,7 @@ class ScheduledStore:
         publish_at_utc: datetime,
         moderation_chat_id=None,
         moderation_message_id: Optional[int] = None,
+        owner_id: int = 0,
     ) -> ScheduledPost:
         pid = uuid.uuid4().hex[:10]
         media_records = []
@@ -122,6 +124,7 @@ class ScheduledStore:
             publish_at=publish_at_utc.timestamp(),
             moderation_chat_id=moderation_chat_id,
             moderation_message_id=moderation_message_id,
+            owner_id=owner_id,
         )
         self._posts[pid] = post
         self._save()
@@ -129,6 +132,9 @@ class ScheduledStore:
 
     def all(self) -> list[ScheduledPost]:
         return list(self._posts.values())
+
+    def all_for(self, owner_id: int) -> list[ScheduledPost]:
+        return [p for p in self._posts.values() if p.owner_id == owner_id]
 
     def latest_publish_at(self, target_chat_id) -> Optional[float]:
         """Время последнего уже поставленного в очередь поста для этого

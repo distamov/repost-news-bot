@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -13,6 +14,8 @@ class ChannelConfig:
     label: str
     language: str = "uz"  # "ru" или "uz"
     signature: str = ""
+    owner_id: int = 0  # telegram user id админа-владельца
+    uid: str = ""  # стабильный id записи (для callback_data, не зависит от позиции)
 
 
 def parse_chat_id(raw: str):
@@ -43,8 +46,9 @@ def _bootstrap_from_env() -> list[ChannelConfig]:
 
 
 class ChannelStore:
-    def __init__(self):
+    def __init__(self, default_owner_id: int = 0):
         self._channels: list[ChannelConfig] = []
+        self._default_owner_id = default_owner_id
         self._load()
 
     def _load(self) -> None:
@@ -53,6 +57,18 @@ class ChannelStore:
             self._channels = [ChannelConfig(**c) for c in raw]
         else:
             self._channels = _bootstrap_from_env()
+            self._save()
+
+        # Миграция записей, созданных до появления owner_id/uid (мульти-админка).
+        migrated = False
+        for ch in self._channels:
+            if not ch.uid:
+                ch.uid = uuid.uuid4().hex[:8]
+                migrated = True
+            if not ch.owner_id:
+                ch.owner_id = self._default_owner_id
+                migrated = True
+        if migrated:
             self._save()
 
     def _save(self) -> None:
@@ -65,8 +81,14 @@ class ChannelStore:
     def all(self) -> list[ChannelConfig]:
         return list(self._channels)
 
+    def all_for(self, owner_id: int) -> list[ChannelConfig]:
+        return [c for c in self._channels if c.owner_id == owner_id]
+
     def get(self, index: int):
         return self._channels[index] if 0 <= index < len(self._channels) else None
+
+    def get_by_uid(self, uid: str):
+        return next((c for c in self._channels if c.uid == uid), None)
 
     def add(self, channel: ChannelConfig) -> None:
         self._channels.append(channel)
@@ -78,6 +100,18 @@ class ChannelStore:
             setattr(channel, key, value)
         self._save()
 
+    def update_by_uid(self, uid: str, **kwargs) -> None:
+        channel = self.get_by_uid(uid)
+        if not channel:
+            return
+        for key, value in kwargs.items():
+            setattr(channel, key, value)
+        self._save()
+
     def remove(self, index: int) -> None:
         self._channels.pop(index)
+        self._save()
+
+    def remove_by_uid(self, uid: str) -> None:
+        self._channels = [c for c in self._channels if c.uid != uid]
         self._save()

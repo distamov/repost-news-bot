@@ -1,3 +1,5 @@
+import uuid
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -20,14 +22,14 @@ class EditChannelForm(StatesGroup):
     waiting_value = State()
 
 
-def _channels_menu(channels: ChannelStore) -> InlineKeyboardMarkup:
+def _channels_menu(channel_list: list[ChannelConfig]) -> InlineKeyboardMarkup:
     rows = [
         [
-            InlineKeyboardButton(text=f"{ch.label} ({ch.language})", callback_data=f"chview:{i}"),
-            InlineKeyboardButton(text="✏️", callback_data=f"chedit:{i}"),
-            InlineKeyboardButton(text="🗑", callback_data=f"chdel:{i}"),
+            InlineKeyboardButton(text=f"{ch.label} ({ch.language})", callback_data=f"chview:{ch.uid}"),
+            InlineKeyboardButton(text="✏️", callback_data=f"chedit:{ch.uid}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"chdel:{ch.uid}"),
         ]
-        for i, ch in enumerate(channels.all())
+        for ch in channel_list
     ]
     rows.append([InlineKeyboardButton(text="➕ Добавить канал", callback_data="chadd")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -47,14 +49,15 @@ async def cmd_channels(message: Message, channels: ChannelStore):
     if not is_allowed(message.from_user.id):
         await message.reply("У вас нет прав.")
         return
-    text = "Твои каналы:" if channels.all() else "Каналов пока нет."
-    await message.answer(text, reply_markup=_channels_menu(channels))
+    channel_list = channels.all_for(message.from_user.id)
+    text = "Твои каналы:" if channel_list else "Каналов пока нет."
+    await message.answer(text, reply_markup=_channels_menu(channel_list))
 
 
 @router.callback_query(F.data.startswith("chview:"))
 async def cb_channel_view(callback: CallbackQuery, channels: ChannelStore):
-    ch = channels.get(int(callback.data.split(":", 1)[1]))
-    if ch:
+    ch = channels.get_by_uid(callback.data.split(":", 1)[1])
+    if ch and ch.owner_id == callback.from_user.id:
         await callback.message.answer(_channel_card(ch))
     await callback.answer()
 
@@ -112,10 +115,18 @@ async def form_channel_signature(message: Message, state: FSMContext, channels: 
     signature = "" if message.text.strip() == "-" else message.text
     data = await state.get_data()
     channels.add(
-        ChannelConfig(id=data["id"], label=data["label"], language=data["language"], signature=signature)
+        ChannelConfig(
+            id=data["id"],
+            label=data["label"],
+            language=data["language"],
+            signature=signature,
+            owner_id=message.from_user.id,
+            uid=uuid.uuid4().hex[:8],
+        )
     )
     await state.clear()
-    await message.reply("Канал добавлен ✅", reply_markup=_channels_menu(channels))
+    channel_list = channels.all_for(message.from_user.id)
+    await message.reply("Канал добавлен ✅", reply_markup=_channels_menu(channel_list))
 
 
 @router.callback_query(F.data.startswith("chdel:"))
@@ -123,11 +134,11 @@ async def cb_channel_delete(callback: CallbackQuery):
     if not is_allowed(callback.from_user.id):
         await callback.answer("Нет прав.", show_alert=True)
         return
-    idx = callback.data.split(":", 1)[1]
+    uid = callback.data.split(":", 1)[1]
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"chdelyes:{idx}"),
+                InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"chdelyes:{uid}"),
                 InlineKeyboardButton(text="Отмена", callback_data="chdelno"),
             ]
         ]
@@ -138,10 +149,15 @@ async def cb_channel_delete(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("chdelyes:"))
 async def cb_channel_delete_confirm(callback: CallbackQuery, channels: ChannelStore):
-    idx = int(callback.data.split(":", 1)[1])
-    channels.remove(idx)
+    uid = callback.data.split(":", 1)[1]
+    ch = channels.get_by_uid(uid)
+    if not ch or ch.owner_id != callback.from_user.id:
+        await callback.answer("Канал не найден.", show_alert=True)
+        return
+    channels.remove_by_uid(uid)
     await callback.message.edit_text("Канал удалён ✅")
-    await callback.message.answer("Твои каналы:", reply_markup=_channels_menu(channels))
+    channel_list = channels.all_for(callback.from_user.id)
+    await callback.message.answer("Твои каналы:", reply_markup=_channels_menu(channel_list))
     await callback.answer()
 
 
@@ -153,17 +169,17 @@ async def cb_channel_delete_cancel(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("chedit:"))
 async def cb_channel_edit(callback: CallbackQuery, channels: ChannelStore):
-    idx = int(callback.data.split(":", 1)[1])
-    ch = channels.get(idx)
-    if not ch:
+    uid = callback.data.split(":", 1)[1]
+    ch = channels.get_by_uid(uid)
+    if not ch or ch.owner_id != callback.from_user.id:
         await callback.answer("Канал не найден.", show_alert=True)
         return
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="ID", callback_data=f"cheditfield:{idx}:id")],
-            [InlineKeyboardButton(text="Название", callback_data=f"cheditfield:{idx}:label")],
-            [InlineKeyboardButton(text="Язык", callback_data=f"cheditfield:{idx}:language")],
-            [InlineKeyboardButton(text="Подпись", callback_data=f"cheditfield:{idx}:signature")],
+            [InlineKeyboardButton(text="ID", callback_data=f"cheditfield:{uid}:id")],
+            [InlineKeyboardButton(text="Название", callback_data=f"cheditfield:{uid}:label")],
+            [InlineKeyboardButton(text="Язык", callback_data=f"cheditfield:{uid}:language")],
+            [InlineKeyboardButton(text="Подпись", callback_data=f"cheditfield:{uid}:signature")],
         ]
     )
     await callback.message.answer(f"{_channel_card(ch)}\n\nЧто изменить?", reply_markup=kb)
@@ -172,14 +188,14 @@ async def cb_channel_edit(callback: CallbackQuery, channels: ChannelStore):
 
 @router.callback_query(F.data.startswith("cheditfield:"))
 async def cb_channel_edit_field(callback: CallbackQuery, state: FSMContext):
-    _, idx_str, field = callback.data.split(":", 2)
+    _, uid, field = callback.data.split(":", 2)
 
     if field == "language":
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="🇷🇺 Русский", callback_data=f"chsetlang:{idx_str}:ru"),
-                    InlineKeyboardButton(text="🇺🇿 Узбекский", callback_data=f"chsetlang:{idx_str}:uz"),
+                    InlineKeyboardButton(text="🇷🇺 Русский", callback_data=f"chsetlang:{uid}:ru"),
+                    InlineKeyboardButton(text="🇺🇿 Узбекский", callback_data=f"chsetlang:{uid}:uz"),
                 ]
             ]
         )
@@ -188,7 +204,7 @@ async def cb_channel_edit_field(callback: CallbackQuery, state: FSMContext):
         return
 
     await state.set_state(EditChannelForm.waiting_value)
-    await state.update_data(index=int(idx_str), field=field)
+    await state.update_data(uid=uid, field=field)
     prompts = {
         "id": "Пришли новый ID канала (@username или числовой id).",
         "label": "Пришли новое название.",
@@ -200,8 +216,12 @@ async def cb_channel_edit_field(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("chsetlang:"))
 async def cb_channel_set_lang(callback: CallbackQuery, channels: ChannelStore):
-    _, idx_str, lang = callback.data.split(":", 2)
-    channels.update(int(idx_str), language=lang)
+    _, uid, lang = callback.data.split(":", 2)
+    ch = channels.get_by_uid(uid)
+    if not ch or ch.owner_id != callback.from_user.id:
+        await callback.answer("Канал не найден.", show_alert=True)
+        return
+    channels.update_by_uid(uid, language=lang)
     await callback.message.edit_text(f"Язык обновлён ✅ ({lang})")
     await callback.answer()
 
@@ -210,7 +230,14 @@ async def cb_channel_set_lang(callback: CallbackQuery, channels: ChannelStore):
 async def form_edit_value(message: Message, state: FSMContext, channels: ChannelStore):
     data = await state.get_data()
     field = data["field"]
+    uid = data["uid"]
     raw = message.text.strip()
+
+    ch = channels.get_by_uid(uid)
+    if not ch or ch.owner_id != message.from_user.id:
+        await state.clear()
+        await message.reply("Канал не найден.")
+        return
 
     if field == "id":
         value = parse_chat_id(raw)
@@ -219,6 +246,7 @@ async def form_edit_value(message: Message, state: FSMContext, channels: Channel
     else:
         value = raw
 
-    channels.update(data["index"], **{field: value})
+    channels.update_by_uid(uid, **{field: value})
     await state.clear()
-    await message.reply("Обновлено ✅", reply_markup=_channels_menu(channels))
+    channel_list = channels.all_for(message.from_user.id)
+    await message.reply("Обновлено ✅", reply_markup=_channels_menu(channel_list))

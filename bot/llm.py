@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import re
 
 import httpx
 
@@ -74,7 +75,7 @@ def _build_system_prompt(language: str) -> str:
    и разбивку на абзацы через пустую строку. Заголовок и КАЖДЫЙ абзац
    заканчивай БЕЗ точки в конце (без "." на конце строки).
 
-В САМОМ КОНЦЕ ответа — два маркера, каждый на отдельной строке:
+В САМОМ КОНЦЕ ответа — три маркера, каждый на отдельной строке:
 
 ###EMOJI###
 Один эмодзи из списка ниже, какой лучше всего подходит по смыслу именно
@@ -88,8 +89,15 @@ def _build_system_prompt(language: str) -> str:
 обстановка), чтобы найденное фото было похоже по содержанию на приложенное.
 Если фото не приложено — опиши ключевые слова по смыслу текста новости.
 
-Не пиши никаких пояснений от себя — только заголовок, текст новости, эмодзи
-и ключевые слова."""
+###CTA###
+Придумай ОДНУ короткую цепляющую фразу (не больше 8-10 слов), которая
+мотивирует читателя переслать этот пост знакомым или в чат. Пиши на том же
+языке, что и сам текст новости. Если получается — свяжи фразу по смыслу с
+темой новости, если нет — просто живая цепляющая фраза без воды и пафоса.
+Без эмодзи, без кавычек, без markdown — только сам текст фразы.
+
+Не пиши никаких пояснений от себя — только заголовок, текст новости, эмодзи,
+ключевые слова и фразу для пересылки."""
 
 
 class LLMService:
@@ -106,7 +114,7 @@ class LLMService:
 
     async def rewrite_and_translate(
         self, source_text: str, photo_bytes: bytes | None = None, language: str = "uz"
-    ) -> tuple[str, str, str | None]:
+    ) -> tuple[str, str, str | None, str | None]:
         parts = [{"text": source_text}]
         if photo_bytes:
             parts.insert(
@@ -177,22 +185,22 @@ class LLMService:
 
         emoji_choice = None
         keywords = "news"
+        cta_text = None
 
-        if "###EMOJI###" in raw:
-            body, rest = raw.split("###EMOJI###", 1)
-            if "###KEYWORDS###" in rest:
-                emoji_part, keywords_part = rest.split("###KEYWORDS###", 1)
-                emoji_choice = emoji_part.strip()
-                keywords = keywords_part.strip()
-            else:
-                emoji_choice = rest.strip()
-        elif "###KEYWORDS###" in raw:
-            body, keywords_part = raw.split("###KEYWORDS###", 1)
-            keywords = keywords_part.strip()
-        else:
-            body = raw
+        chunks = re.split(r"(###EMOJI###|###KEYWORDS###|###CTA###)", raw)
+        body = chunks[0].strip()
+        sections = {}
+        for i in range(1, len(chunks) - 1, 2):
+            sections[chunks[i]] = chunks[i + 1].strip()
 
-        return body.strip(), keywords, emoji_choice
+        if "###EMOJI###" in sections:
+            emoji_choice = sections["###EMOJI###"] or None
+        if "###KEYWORDS###" in sections:
+            keywords = sections["###KEYWORDS###"] or "news"
+        if "###CTA###" in sections:
+            cta_text = sections["###CTA###"] or None
+
+        return body, keywords, emoji_choice, cta_text
 
     async def close(self):
         await self._client.aclose()

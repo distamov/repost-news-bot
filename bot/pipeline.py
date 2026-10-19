@@ -2,6 +2,7 @@ import logging
 
 from aiogram import Bot
 
+from .admins_store import AdminStore
 from .channels_store import ChannelConfig
 from .config import ADMIN_IDS
 from .formatting import build_post_html
@@ -19,9 +20,17 @@ FAILURE_ALERT_THRESHOLD = 3
 _consecutive_failures = 0
 _failure_alert_sent = False
 
+_admin_store: AdminStore | None = None
+
+
+def init_admin_store(store: AdminStore) -> None:
+    global _admin_store
+    _admin_store = store
+
 
 async def _alert_admins(bot: Bot, text: str):
-    for admin_id in ADMIN_IDS:
+    admin_ids = _admin_store.ids() if _admin_store is not None else ADMIN_IDS
+    for admin_id in admin_ids:
         try:
             await bot.send_message(admin_id, text)
         except Exception:
@@ -38,6 +47,7 @@ async def build_and_send_preview(
     photo_bytes,
     chat_id,
     original_media: list[MediaItem] | None = None,
+    requester_id: int = 0,
 ):
     """Переписывает текст под язык конкретного канала, подбирает фото и
     присылает превью с кнопками модерации в chat_id. Если у исходного
@@ -47,7 +57,7 @@ async def build_and_send_preview(
     original_media = original_media or []
 
     try:
-        rewritten, keywords, emoji_choice = await llm.rewrite_and_translate(
+        rewritten, keywords, emoji_choice, cta_text = await llm.rewrite_and_translate(
             source_text, photo_bytes, language=channel.language
         )
     except Exception:
@@ -66,7 +76,7 @@ async def build_and_send_preview(
     _consecutive_failures = 0
     _failure_alert_sent = False
 
-    text = build_post_html(rewritten, channel.signature, emoji_choice, source_text)
+    text = build_post_html(rewritten, channel.signature, emoji_choice, source_text, cta_text)
 
     try:
         photo_urls = await photos.search(keywords)
@@ -83,7 +93,7 @@ async def build_and_send_preview(
         keywords=keywords,
         media_options=media_options,
         chat_id=chat_id,
-        requester_id=0,
+        requester_id=requester_id,
         target_channel_id=channel.id,
         has_original=bool(original_media),
         signature=channel.signature,
@@ -98,6 +108,7 @@ async def build_and_send_preview(
     )
     item.media_message_ids = media_message_ids
     item.text_message_id = text_message_id
+    storage.save(item.id)
 
 
 async def resend_preview(bot: Bot, storage: Storage, item, media: list[MediaItem]):
@@ -118,3 +129,4 @@ async def resend_preview(bot: Bot, storage: Storage, item, media: list[MediaItem
     )
     item.media_message_ids = media_message_ids
     item.text_message_id = text_message_id
+    storage.save(item.id)

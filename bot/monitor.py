@@ -8,7 +8,6 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
 
 from .channels_store import ChannelStore
-from .config import ADMIN_IDS, MODERATION_CHAT_ID
 from .dedup import Deduplicator
 from .keyboards import channel_picker_keyboard
 from .llm import LLMService
@@ -56,7 +55,6 @@ class ChannelMonitor:
         self.storage = storage
         self.channels = channels
         self.sources = sources
-        self._targets = [MODERATION_CHAT_ID] if MODERATION_CHAT_ID else list(ADMIN_IDS)
         self._dedup = Deduplicator()
 
     async def start(self):
@@ -88,7 +86,8 @@ class ChannelMonitor:
             return  # альбомы обрабатываются отдельно, в _on_album
 
         chat = await event.get_chat()
-        if not self.sources.matches(chat):
+        source = self.sources.matches(chat)
+        if not source:
             return
 
         text = (event.raw_text or "").strip()
@@ -108,11 +107,12 @@ class ChannelMonitor:
         except Exception:
             logger.exception("Не удалось скачать медиа исходного поста")
 
-        await self._handle_post(chat, text, original_media, event.message.id)
+        await self._handle_post(chat, text, original_media, event.message.id, source.owner_id)
 
     async def _on_album(self, event):
         chat = await event.get_chat()
-        if not self.sources.matches(chat):
+        source = self.sources.matches(chat)
+        if not source:
             return
 
         text = (event.text or event.raw_text or "").strip()
@@ -134,14 +134,17 @@ class ChannelMonitor:
                 original_media.append(MediaItem("video", data))
 
         message_id = event.messages[0].id if event.messages else None
-        await self._handle_post(chat, text, original_media, message_id)
+        await self._handle_post(chat, text, original_media, message_id, source.owner_id)
 
-    async def _handle_post(self, chat, text, original_media, message_id):
+    async def _handle_post(self, chat, text, original_media, message_id, owner_id):
         source_name = getattr(chat, "title", None) or getattr(chat, "username", None) or "источник"
         source_link = _build_source_link(chat, message_id)
 
-        if not self._targets:
-            logger.warning("Нет получателей для модерации: заполни ADMIN_IDS или MODERATION_CHAT_ID")
+        if not owner_id:
+            logger.warning(
+                "У источника «%s» нет владельца-админа — некому отправить пост на модерацию",
+                source_name,
+            )
             return
 
         duplicate = self._dedup.find_duplicate(text)
@@ -150,24 +153,23 @@ class ChannelMonitor:
             (item.data for item in original_media if item.kind == "photo"), None
         )
 
-        for target in self._targets:
-            selection = self.storage.create_selection(
-                text=text,
-                photo_bytes=source_photo_bytes,
-                original_media=original_media,
-                chat_id=target,
-                requester_id=0,
+        target = owner_id
+        selection = self.storage.create_selection(
+            text=text,
+            photo_bytes=source_photo_bytes,
+            original_media=original_media,
+            chat_id=target,
+            requester_id=owner_id,
+        )
+
+        if duplicate:
+            dup_name, dup_link = duplicate
+            await self._send_duplicate_prompt(
+                target, source_name, source_link, dup_name, dup_link, selection.id
             )
-
-            if duplicate:
-                dup_name, dup_link = duplicate
-                await self._send_duplicate_prompt(
-                    target, source_name, source_link, dup_name, dup_link, selection.id
-                )
-                continue
-
+        else:
             header = f"📡 Новый пост из «{_source_ref(source_name, source_link)}»"
-            all_channels = self.channels.all()
+            all_channels = self.channels.all_for(owner_id)
 
             if len(all_channels) == 1:
                 self.storage.delete_selection(selection.id)
@@ -175,31 +177,30 @@ class ChannelMonitor:
                     await self.bot.send_message(
                         target, f"{header}\n⏳ Готовлю пост для «{all_channels[0].label}»..."
                     )
+                    await build_and_send_preview(
+                        self.bot,
+                        self.llm,
+                        self.photos,
+                        self.storage,
+                        all_channels[0],
+                        text,
+                        source_photo_bytes,
+                        target,
+                        original_media=original_media,
+                        requester_id=owner_id,
+                    )
                 except Exception:
                     logger.exception("Не удалось отправить сообщение в %s", target)
-                    continue
-                await build_and_send_preview(
-                    self.bot,
-                    self.llm,
-                    self.photos,
-                    self.storage,
-                    all_channels[0],
-                    text,
-                    source_photo_bytes,
-                    target,
-                    original_media=original_media,
-                )
-                continue
-
-            try:
-                await self.bot.send_message(
-                    target,
-                    f"{header}\nДля какого канала готовим пост?",
-                    reply_markup=channel_picker_keyboard(selection.id, all_channels),
-                )
-            except Exception:
-                logger.exception("Не удалось отправить меню выбора канала в %s", target)
-                self.storage.delete_selection(selection.id)
+            else:
+                try:
+                    await self.bot.send_message(
+                        target,
+                        f"{header}\nДля какого канала готовим пост?",
+                        reply_markup=channel_picker_keyboard(selection.id, all_channels),
+                    )
+                except Exception:
+                    logger.exception("Не удалось отправить меню выбора канала в %s", target)
+                    self.storage.delete_selection(selection.id)
 
         if not duplicate:
             self._dedup.add(text, source_name, source_link)

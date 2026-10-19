@@ -174,6 +174,7 @@ def build_post_html(
     signature: str = "",
     suggested_emoji: str | None = None,
     source_text: str | None = None,
+    cta_text: str | None = None,
 ) -> str:
     """Собирает HTML-пост из ответа LLM: первая строка — жирный заголовок
     (с эмодзи — либо по смыслу новости, либо иногда как в исходном посте,
@@ -206,6 +207,8 @@ def build_post_html(
     parts = [f"<b>{headline}</b>"]
     if paragraphs:
         parts.append("\n\n".join(html.escape(p) for p in paragraphs))
+    if cta_text and cta_text.strip():
+        parts.append(f"<i>{html.escape(cta_text.strip())}</i>")
     if signature:
         parts.append(animate_signature(signature))
 

@@ -76,10 +76,14 @@ def _retime_keyboard(pid: str) -> InlineKeyboardMarkup:
     )
 
 
-async def _show_list(message_to_edit, scheduled: ScheduledStore):
-    posts = scheduled.all()
+async def _show_list(message_to_edit, scheduled: ScheduledStore, owner_id: int):
+    posts = scheduled.all_for(owner_id)
     text = "Отложенные посты:" if posts else "Отложенных постов нет."
     await message_to_edit.edit_text(text, reply_markup=_list_keyboard(posts))
+
+
+def _owned(post, user_id: int) -> bool:
+    return bool(post) and (not post.owner_id or post.owner_id == user_id)
 
 
 @router.message(Command("scheduled"))
@@ -87,14 +91,14 @@ async def cmd_scheduled(message: Message, scheduled: ScheduledStore):
     if not is_allowed(message.from_user.id):
         await message.reply("У вас нет прав.")
         return
-    posts = scheduled.all()
+    posts = scheduled.all_for(message.from_user.id)
     text = "Отложенные посты:" if posts else "Отложенных постов нет."
     await message.answer(text, reply_markup=_list_keyboard(posts))
 
 
 @router.callback_query(F.data == "splist")
 async def cb_list(callback: CallbackQuery, scheduled: ScheduledStore):
-    await _show_list(callback.message, scheduled)
+    await _show_list(callback.message, scheduled, callback.from_user.id)
     await callback.answer()
 
 
@@ -102,9 +106,9 @@ async def cb_list(callback: CallbackQuery, scheduled: ScheduledStore):
 async def cb_view(callback: CallbackQuery, scheduled: ScheduledStore):
     pid = callback.data.split(":", 1)[1]
     post = scheduled.get(pid)
-    if not post:
+    if not _owned(post, callback.from_user.id):
         await callback.answer("Пост уже опубликован или удалён.", show_alert=True)
-        await _show_list(callback.message, scheduled)
+        await _show_list(callback.message, scheduled, callback.from_user.id)
         return
     when = format_tashkent(datetime.fromtimestamp(post.publish_at, tz=timezone.utc))
     # Режем HTML-теги ДО обрезки по длине — иначе обрезка может разорвать
@@ -131,7 +135,7 @@ async def cb_publish_now(
         return
     pid = callback.data.split(":", 1)[1]
     post = scheduled.get(pid)
-    if not post:
+    if not _owned(post, callback.from_user.id):
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
     try:
@@ -160,6 +164,10 @@ async def cb_delete(callback: CallbackQuery, scheduled: ScheduledStore):
         await callback.answer("Нет прав.", show_alert=True)
         return
     pid = callback.data.split(":", 1)[1]
+    post = scheduled.get(pid)
+    if not _owned(post, callback.from_user.id):
+        await callback.answer("Этот пост уже обработан.", show_alert=True)
+        return
     scheduled.remove(pid)
     await callback.message.edit_text("🗑 Удалено из очереди.")
     await callback.answer()
@@ -171,7 +179,7 @@ async def cb_retime_menu(callback: CallbackQuery, scheduled: ScheduledStore, sta
         await callback.answer("Нет прав.", show_alert=True)
         return
     pid = callback.data.split(":", 1)[1]
-    if not scheduled.get(pid):
+    if not _owned(scheduled.get(pid), callback.from_user.id):
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
     await state.set_state(RetimeForm.waiting_time)
@@ -191,7 +199,7 @@ async def cb_retime_queue(callback: CallbackQuery, scheduled: ScheduledStore, st
         return
     pid = callback.data.split(":", 1)[1]
     post = scheduled.get(pid)
-    if not post:
+    if not _owned(post, callback.from_user.id):
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
 
@@ -219,7 +227,7 @@ async def cb_retime_in(callback: CallbackQuery, scheduled: ScheduledStore, state
         await callback.answer("Нет прав.", show_alert=True)
         return
     _, pid, minutes_str = callback.data.split(":", 2)
-    if not scheduled.get(pid):
+    if not _owned(scheduled.get(pid), callback.from_user.id):
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
 
@@ -239,7 +247,7 @@ async def cb_retime_at(callback: CallbackQuery, scheduled: ScheduledStore, state
         await callback.answer("Нет прав.", show_alert=True)
         return
     _, pid, hh, mm = callback.data.split(":", 3)
-    if not scheduled.get(pid):
+    if not _owned(scheduled.get(pid), callback.from_user.id):
         await callback.answer("Этот пост уже обработан.", show_alert=True)
         return
 
@@ -261,7 +269,7 @@ async def cb_retime_at(callback: CallbackQuery, scheduled: ScheduledStore, state
 async def receive_retime_text(message: Message, state: FSMContext, scheduled: ScheduledStore):
     data = await state.get_data()
     pid = data.get("pid")
-    if not scheduled.get(pid):
+    if not _owned(scheduled.get(pid), message.from_user.id):
         await state.clear()
         await message.reply("Этот пост уже обработан.")
         return
