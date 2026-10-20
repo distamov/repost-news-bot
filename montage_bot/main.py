@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from PIL import Image
 from telethon import Button, TelegramClient, events
 from telethon.tl.types import DocumentAttributeVideo
 
@@ -13,7 +14,7 @@ from . import config
 from .render import render_video
 from .selector import plan_shots
 from .sources import media_duration, probe, run
-from .subtitles import Word, align_corrected_text, build_ass, chunk_words
+from .subtitles import Word, align_corrected_text, chunk_words
 from .timeline import build_cuts
 from .transcribe import transcribe
 
@@ -153,8 +154,10 @@ async def _save_asset(event, kind: str, media: str | None) -> None:
             if media != "photo":
                 await event.reply("Пришли картинку PNG (лучше файлом).")
                 return
-            await run("ffmpeg", "-y", "-v", "error", "-i", str(tmp), "-vf", "format=rgba",
-                      str(config.LOGO_PATH), capture=False)
+            logo = Image.open(tmp).convert("RGBA")
+            # Обрезаем прозрачные поля вокруг — ширина лого в настройках относится к самому знаку.
+            bbox = logo.getchannel("A").point(lambda a: 255 if a > 10 else 0).getbbox()
+            (logo.crop(bbox) if bbox else logo).save(config.LOGO_PATH)
             note = "" if event.message.document else (
                 "\n⚠️ Пришло как фото — Telegram сжимает фото и убирает прозрачность. "
                 "Если у лого появился фон, пришли PNG как файл: /setlogo")
@@ -321,8 +324,7 @@ async def _render(chat_id: int, job: Job) -> None:
                     last_edit = time.time()
                     await status.edit(f"✂️ Нарезка: {done}/{total}" + ("\n🎬 Финальная сборка…" if done == total else ""))
 
-            ass = build_ass(chunk_words(job.words))
-            out = await render_video(job.dir, shots, ass, job.voice, job.voice_duration, progress)
+            out = await render_video(job.dir, shots, chunk_words(job.words), job.voice, job.voice_duration, progress)
             await status.edit("📤 Отправляю…")
             await client.send_file(
                 chat_id,

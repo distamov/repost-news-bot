@@ -1,6 +1,9 @@
 import difflib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 MAX_WORDS = 3
 MAX_CHARS = 18
@@ -23,6 +26,7 @@ class Chunk:
     start: float
     end: float
     text: str
+    words: list[Word] = field(default_factory=list)
 
 
 def _clean(word: str) -> str:
@@ -60,7 +64,7 @@ def chunk_words(words: list[Word]) -> list[Chunk]:
         end = max(g[-1].end, g[-1].start + 0.2) + HOLD_AFTER
         if i + 1 < len(groups):
             end = min(end, groups[i + 1][0].start)
-        chunks.append(Chunk(g[0].start, max(end, g[0].start + 0.1), " ".join(_clean(w.text) for w in g)))
+        chunks.append(Chunk(g[0].start, max(end, g[0].start + 0.1), " ".join(_clean(w.text) for w in g), g))
     return chunks
 
 
@@ -98,30 +102,89 @@ def align_corrected_text(words: list[Word], corrected: str) -> list[Word]:
     return out
 
 
-def _ass_time(t: float) -> str:
-    cs = int(round(max(t, 0) * 100))
-    h, cs = divmod(cs, 360000)
-    m, cs = divmod(cs, 6000)
-    s, cs = divmod(cs, 100)
-    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+# Стиль как в роликах канала (CapCut): белый капс с тонкой обводкой и мягкой тенью,
+# произносимое сейчас слово — на чёрной плашке со скруглёнными углами.
+FONT_SIZE = 34
+CAPTION_CENTER_Y = 866  # центр строки в кадре 720×1280
+STRIP_W, STRIP_H = 720, 160
+STRIP_TOP = CAPTION_CENTER_Y - STRIP_H // 2
+MAX_LINE_W = 660
+BOX_PAD_X, BOX_PAD_Y, BOX_RADIUS = 7, 7, 7
 
 
-def build_ass(chunks: list[Chunk], font_name: str = "Montserrat ExtraBold") -> str:
-    """Стиль как в роликах канала: белый жирный капс, чёрная обводка и тень,
-    по центру, низ текста ≈ y 880 из 1280."""
-    header = (
-        "[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nWrapStyle: 0\n"
-        "ScaledBorderAndShadow: yes\n\n"
-        "[V4+ Styles]\n"
-        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
-        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
-        "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Main,{font_name},38,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,"
-        "0,0,0,0,100,100,1,0,1,3,2,2,50,50,400,1\n\n"
-        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-    )
-    lines = [
-        f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},Main,,0,0,0,,{c.text.replace('{', '').replace('}', '')}"
-        for c in chunks
-    ]
-    return header + "\n".join(lines) + "\n"
+def _draw_caption(words: list[str], active: int, font: ImageFont.FreeTypeFont) -> Image.Image:
+    size = font.size
+    while True:
+        space = font.getlength(" ")
+        widths = [font.getlength(w) for w in words]
+        total = sum(widths) + space * (len(words) - 1) + 2 * BOX_PAD_X
+        if total <= MAX_LINE_W or size <= 20:
+            break
+        size -= 2  # длинное узбекское слово не влезает — чуть уменьшаем шрифт
+        font = font.font_variant(size=size)
+
+    _, cap_top, _, cap_bot = font.getbbox("Н")
+    y = STRIP_H / 2 - (cap_top + cap_bot) / 2  # заглавные буквы ровно по центру полосы
+    x = (STRIP_W - (total - 2 * BOX_PAD_X)) / 2
+    positions = []
+    for wd in widths:
+        positions.append(x)
+        x += wd + space
+
+    base = Image.new("RGBA", (STRIP_W, STRIP_H), (0, 0, 0, 0))
+    shadow = Image.new("RGBA", (STRIP_W, STRIP_H), (0, 0, 0, 0))
+    draw, shadow_draw = ImageDraw.Draw(base), ImageDraw.Draw(shadow)
+    for i, (word, x0, wd) in enumerate(zip(words, positions, widths)):
+        if i == active:
+            draw.rounded_rectangle(
+                [x0 - BOX_PAD_X, y + cap_top - BOX_PAD_Y, x0 + wd + BOX_PAD_X, y + cap_bot + BOX_PAD_Y],
+                radius=BOX_RADIUS, fill=(0, 0, 0, 255),
+            )
+        else:
+            shadow_draw.text((x0, y + 2), word, font=font, fill=(0, 0, 0, 160),
+                             stroke_width=2, stroke_fill=(0, 0, 0, 160))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(2.5))
+    for i, (word, x0) in enumerate(zip(words, positions)):
+        draw.text((x0, y), word, font=font, fill=(255, 255, 255, 255),
+                  stroke_width=0 if i == active else 1, stroke_fill=(0, 0, 0, 255))
+    return Image.alpha_composite(shadow, base)
+
+
+def render_caption_track(chunks: list[Chunk], total: float, out_dir: Path, font_path: Path) -> Path:
+    """Рисует по картинке на каждое слово (плашка переезжает на него, пока оно
+    звучит) и собирает их в список для ffmpeg concat с длительностями.
+    Возвращает путь к этому списку; картинки — полоса STRIP_W×STRIP_H."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    font = ImageFont.truetype(str(font_path), FONT_SIZE)
+    blank = out_dir / "blank.png"
+    Image.new("RGBA", (STRIP_W, STRIP_H), (0, 0, 0, 0)).save(blank)
+
+    states: list[tuple[float, float, Path]] = []
+    for ci, chunk in enumerate(chunks):
+        texts = [_clean(w.text) for w in chunk.words]
+        for k, word in enumerate(chunk.words):
+            start = chunk.start if k == 0 else word.start
+            end = chunk.words[k + 1].start if k + 1 < len(chunk.words) else chunk.end
+            if end - start < 0.02:
+                continue
+            img = out_dir / f"c{ci:03d}_{k}.png"
+            _draw_caption(texts, k, font).save(img)
+            states.append((start, end, img))
+
+    lines, t = [], 0.0
+    for start, end, img in states:
+        start = max(start, t)
+        if start - t > 0.01:
+            lines.append((blank, start - t))
+        if end - start > 0.01:
+            lines.append((img, end - start))
+            t = end
+    if total - t > 0.01:
+        lines.append((blank, total - t))
+    if not lines:
+        lines.append((blank, max(total, 0.1)))
+
+    listing = out_dir / "captions.txt"
+    body = "".join(f"file '{img}'\nduration {d:.3f}\n" for img, d in lines)
+    listing.write_text(body + f"file '{lines[-1][0]}'\n")  # concat требует повторить последний кадр
+    return listing

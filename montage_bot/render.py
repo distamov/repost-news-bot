@@ -5,6 +5,7 @@ from typing import Awaitable, Callable
 from . import config
 from .selector import Shot
 from .sources import run
+from .subtitles import STRIP_TOP, Chunk, render_caption_track
 
 W, H, FPS = 720, 1280, 30
 X264 = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p", "-r", str(FPS)]
@@ -128,7 +129,7 @@ async def render_shot(shot: Shot, out: Path) -> None:
 async def render_video(
     job_dir: Path,
     shots: list[Shot],
-    ass_text: str,
+    chunks: list[Chunk],
     voice: Path,
     total: float,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
@@ -149,30 +150,31 @@ async def render_video(
     await run("ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(concat_list),
               "-c", "copy", str(joined), capture=False)
 
-    ass_path = job_dir / "subs.ass"
-    ass_path.write_text(ass_text, encoding="utf-8")
+    captions = render_caption_track(chunks, total, parts_dir / "captions", config.FONT_PATH)
 
-    inputs = ["-i", str(joined), "-i", str(voice)]
-    has_music = config.MUSIC_PATH.exists()
-    has_logo = config.LOGO_PATH.exists()
-    if has_music:
+    inputs = ["-i", str(joined), "-i", str(voice), "-f", "concat", "-safe", "0", "-i", str(captions)]
+    next_idx = 3
+    music_idx = logo_idx = None
+    if config.MUSIC_PATH.exists():
         inputs += ["-stream_loop", "-1", "-i", str(config.MUSIC_PATH)]
-    if has_logo:
+        music_idx, next_idx = next_idx, next_idx + 1
+    if config.LOGO_PATH.exists():
         inputs += ["-i", str(config.LOGO_PATH)]
-    logo_idx = 3 if has_music else 2
+        logo_idx = next_idx
 
     v = "[0:v]tpad=stop_mode=clone:stop_duration=2[v0]"
     last = "v0"
-    if has_logo:
+    if logo_idx is not None:
         v += (f";[{logo_idx}:v]scale={config.LOGO_WIDTH}:-1,format=rgba[lg]"
               f";[v0][lg]overlay=(W-w)/2:{config.LOGO_Y}[v1]")
         last = "v1"
-    v += f";[{last}]ass='{ass_path}':fontsdir='{config.FONTS_DIR}'[v]"
+    v += (f";[2:v]fps={FPS},format=rgba[cap]"
+          f";[{last}][cap]overlay=0:{STRIP_TOP}:eof_action=pass[v]")
 
     a = "[1:a]aresample=48000,aformat=channel_layouts=stereo"
-    if has_music:
+    if music_idx is not None:
         fade_at = max(total - 1.5, 0)
-        a += ("[vo];[2:a]aresample=48000,aformat=channel_layouts=stereo,"
+        a += (f"[vo];[{music_idx}:a]aresample=48000,aformat=channel_layouts=stereo,"
               f"volume={config.MUSIC_VOLUME_DB}dB,afade=t=out:st={fade_at:.2f}:d=1.5[mu];"
               "[vo][mu]amix=inputs=2:duration=first:dropout_transition=0:normalize=0")
     a += "[a]"

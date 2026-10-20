@@ -25,12 +25,12 @@ ADMIN_IDS = {int(x) for x in _admins_raw.split(",") if x.strip()}
 
 DATA_DIR = ROOT / "data" / "montage"
 WORK_DIR = Path(os.environ.get("MONTAGE_WORK_DIR", "/tmp/montage"))
-FONTS_DIR = Path(__file__).resolve().parent / "assets"
+FONT_PATH = Path(__file__).resolve().parent / "assets" / "Montserrat-Bold.otf"
 
 LOGO_PATH = DATA_DIR / "logo.png"
 MUSIC_PATH = DATA_DIR / "music.m4a"
 
 # Положение и размер лого/субтитров замерены по готовым роликам канала (720×1280).
-LOGO_WIDTH = int(os.environ.get("MONTAGE_LOGO_WIDTH", "160"))
-LOGO_Y = int(os.environ.get("MONTAGE_LOGO_Y", "265"))
+LOGO_WIDTH = int(os.environ.get("MONTAGE_LOGO_WIDTH", "146"))
+LOGO_Y = int(os.environ.get("MONTAGE_LOGO_Y", "249"))
 MUSIC_VOLUME_DB = float(os.environ.get("MONTAGE_MUSIC_DB", "-25"))

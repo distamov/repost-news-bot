@@ -4,3 +4,4 @@ python-dotenv>=1.0
 telethon>=1.36
 hachoir>=3.3
 numpy>=1.26
+Pillow>=10
