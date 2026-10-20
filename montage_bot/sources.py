@@ -6,8 +6,10 @@ from pathlib import Path
 import numpy as np
 
 MOTION_FPS = 2  # одна оценка «живости» на каждые 0.5 сек исходника
-_MW, _MH = 32, 56
+_AW, _AH = 180, 320  # разрешение для анализа (динамика + поиск чужих надписей)
 IMAGE_FORMATS = ("image2", "png_pipe", "jpeg_pipe", "webp_pipe", "bmp_pipe", "gif", "tiff_pipe")
+
+Box = tuple[float, float, float, float]  # x0, y0, x1, y1 в долях кадра
 
 
 @dataclass
@@ -18,6 +20,7 @@ class Source:
     height: int
     duration: float = 0.0
     motion: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    overlays: list[Box] = field(default_factory=list)  # чужие водяные знаки/подписи
 
     @property
     def landscape(self) -> bool:
@@ -66,21 +69,49 @@ async def probe(path: Path) -> Source:
     if is_image:
         return Source(path, "photo", w, h)
     src = Source(path, "video", w, h, duration)
-    src.motion = await motion_profile(path)
+    raw = await run(
+        "ffmpeg", "-v", "error", "-i", str(path),
+        "-vf", f"fps={MOTION_FPS},scale={_AW}:{_AH},format=gray", "-f", "rawvideo", "-",
+    )
+    n = len(raw) // (_AW * _AH)
+    frames = np.frombuffer(raw, dtype=np.uint8)[: n * _AW * _AH].reshape(n, _AH, _AW)
+    src.motion = motion_profile(frames)
+    src.overlays = detect_overlays(frames)
     return src
 
 
-async def motion_profile(path: Path) -> np.ndarray:
+def motion_profile(frames: np.ndarray) -> np.ndarray:
     """Насколько меняется картинка в каждые полсекунды — чтобы не брать
     статичные, скучные куски."""
-    raw = await run(
-        "ffmpeg", "-v", "error", "-i", str(path),
-        "-vf", f"fps={MOTION_FPS},scale={_MW}:{_MH},format=gray", "-f", "rawvideo", "-",
-    )
-    frames = np.frombuffer(raw, dtype=np.uint8)
-    n = len(frames) // (_MW * _MH)
-    if n < 2:
-        return np.zeros(max(n, 1))
-    frames = frames[: n * _MW * _MH].reshape(n, _MH, _MW).astype(np.int16)
-    diff = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
+    if len(frames) < 2:
+        return np.zeros(max(len(frames), 1))
+    small = frames[:, ::4, ::4].astype(np.int16)
+    diff = np.abs(np.diff(small, axis=0)).mean(axis=(1, 2))
     return np.concatenate([[diff[0]], diff])
+
+
+def detect_overlays(frames: np.ndarray, max_samples: int = 48) -> list[Box]:
+    """Ищет наложенные поверх видео надписи (водяные знаки чужих каналов):
+    когда камера движется, неподвижными остаются только они — их контуры
+    есть почти в каждом кадре."""
+    if len(frames) < 6:
+        return []
+    idx = np.linspace(0, len(frames) - 1, min(len(frames), max_samples)).astype(int)
+    f = frames[idx].astype(np.int16)
+    edges = np.abs(np.diff(f, axis=2))[:, :-1, :] + np.abs(np.diff(f, axis=1))[:, :, :-1]
+    mask = np.percentile(edges, 20, axis=0) > 40
+    if mask.mean() > 0.12:
+        return []  # камера стояла на месте — неподвижна вся сцена, надписи так не отличить
+    h, w = mask.shape
+    rows = np.append(mask.mean(axis=1), 0)
+    boxes, start = [], None
+    for y, density in enumerate(rows):
+        if density > 0.08 and start is None:
+            start = y
+        elif density <= 0.08 and start is not None:
+            if 3 <= y - start <= 0.15 * h:
+                xs = np.where(mask[start:y].mean(axis=0) > 0.15)[0]
+                if len(xs) and (xs.max() - xs.min()) / w > 0.08:
+                    boxes.append((xs.min() / w, start / h, (xs.max() + 1) / w, y / h))
+            start = None
+    return boxes

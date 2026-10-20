@@ -30,6 +30,50 @@ def _cover(out_w: int, out_h: int) -> str:
     return f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h}"
 
 
+EDGE_ZONE = 0.25  # надпись в верхней/нижней четверти — обрезаем, ближе к центру — закрашиваем
+MIN_KEEP = 0.7  # если обрезкой теряется больше 30% кадра — лучше закрасить
+
+
+def _overlay_plan(overlays: list) -> tuple[float, float, list]:
+    """Чужие водяные знаки у края — обрезаем полосой (картинка чище),
+    посередине — закрашиваем (обрезка там съела бы полкадра).
+    Возвращает (верх, низ оставляемой части кадра, что закрасить)."""
+    top, bottom, blur = 0.0, 1.0, []
+    for box in overlays:
+        x0, y0, x1, y1 = box
+        if y0 >= 1 - EDGE_ZONE:
+            bottom = min(bottom, y0 - 0.015)
+        elif y1 <= EDGE_ZONE:
+            top = max(top, y1 + 0.015)
+        else:
+            blur.append(box)
+    if bottom - top < MIN_KEEP:
+        return 0.0, 1.0, list(overlays)
+    return top, bottom, blur
+
+
+def _remove_overlays(overlays: list, width: int, height: int) -> str:
+    top, bottom, inner = _overlay_plan(overlays)
+    parts = []
+    for x0, y0, x1, y1 in inner:
+        # delogo закрашивает область по соседним пикселям — в отличие от размытия,
+        # убирает и сплошную плашку под текстом. Область должна быть строго внутри кадра.
+        x = max(1, int((x0 - 0.03) * width))
+        y = max(1, int((y0 - 0.015) * height))
+        x2 = min(width - 2, int((x1 + 0.03) * width))
+        y2 = min(height - 2, int((y1 + 0.015) * height))
+        if x2 - x > 2 and y2 - y > 2:
+            parts.append(f"delogo=x={x}:y={y}:w={x2 - x}:h={y2 - y}")
+    if top > 0 or bottom < 1:
+        parts.append(f"crop=iw:ih*{bottom - top:.4f}:0:ih*{top:.4f}")
+    return ",".join(parts)
+
+
+def _sharpen(src_width: int) -> str:
+    # Исходники из соцсетей бывают 352px шириной — после растягивания до 720 они мыльные.
+    return ",unsharp=5:5:0.7" if src_width < 600 else ""
+
+
 def _ken_burns(mode: str, frames: int) -> str:
     p = f"(on/{max(frames - 1, 1)})"
     center_x, center_y = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
@@ -62,11 +106,17 @@ async def render_shot(shot: Shot, out: Path) -> None:
     else:
         src_dur = d * shot.speed
         retime = f"setpts=(PTS-STARTPTS)/{shot.speed:.4f},fps={FPS}"
-        if shot.source.landscape:
+        cleanup = _remove_overlays(shot.source.overlays, shot.source.width, shot.source.height)
+        # После обрезки полосы с надписью горизонтальный кадр может стать «вертикальнее» —
+        # решение размывать фон принимаем по тому, что осталось.
+        top, bottom, _ = _overlay_plan(shot.source.overlays)
+        keep = bottom - top
+        if shot.source.width / (shot.source.height * keep) > 0.7:
             frame = _blur_fill(_even(W * shot.zoom), W, H)
         else:
             frame = f"{_cover(_even(W * shot.zoom), _even(H * shot.zoom))},crop={W}:{H}"
-        graph = f"[0:v]{retime},{frame},{tail}[v]"
+        chain = ",".join(p for p in (retime, cleanup, frame) if p)
+        graph = f"[0:v]{chain}{_sharpen(shot.source.width)},{tail}[v]"
         inputs = ["-ss", f"{shot.start:.3f}", "-t", f"{src_dur + 0.1:.3f}", "-i", str(shot.source.path)]
 
     await run(
