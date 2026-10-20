@@ -1,5 +1,6 @@
 import asyncio
 import json
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,9 +29,20 @@ class Source:
         return self.width / self.height > 0.7
 
 
+# На сервере ffmpeg уступает процессор новостному боту; на Windows команды nice нет.
+_NICE = ["nice", "-n", "10"] if shutil.which("nice") else []
+
+
+def concat_line(path: Path) -> str:
+    """Строка `file '...'` для списка ffmpeg concat: прямые слэши (Windows-пути
+    с обратными слэшами concat читает ненадёжно) и экранированный апостроф."""
+    quoted = Path(path).resolve().as_posix().replace("'", "'\\''")
+    return f"file '{quoted}'\n"
+
+
 async def run(*args: str, capture: bool = True) -> bytes:
     proc = await asyncio.create_subprocess_exec(
-        "nice", "-n", "10", *args,
+        *_NICE, *args,
         stdout=asyncio.subprocess.PIPE if capture else asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )

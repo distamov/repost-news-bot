@@ -5,6 +5,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from .sources import concat_line
+
 MAX_WORDS = 3
 MAX_CHARS = 18
 PAUSE_BREAK = 0.6  # пауза в речи длиннее этого — всегда новая фраза
@@ -185,6 +187,7 @@ def render_caption_track(chunks: list[Chunk], total: float, out_dir: Path, font_
         lines.append((blank, max(total, 0.1)))
 
     listing = out_dir / "captions.txt"
-    body = "".join(f"file '{img}'\nduration {d:.3f}\n" for img, d in lines)
-    listing.write_text(body + f"file '{lines[-1][0]}'\n")  # concat требует повторить последний кадр
+    body = "".join(f"{concat_line(img)}duration {d:.3f}\n" for img, d in lines)
+    # concat требует повторить последний кадр
+    listing.write_text(body + concat_line(lines[-1][0]), encoding="utf-8")
     return listing

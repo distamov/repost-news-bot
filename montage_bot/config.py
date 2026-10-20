@@ -1,4 +1,5 @@
 import os
+import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,7 +25,7 @@ _admins_raw = os.environ.get("MONTAGE_ADMIN_IDS") or os.environ.get("ADMIN_IDS",
 ADMIN_IDS = {int(x) for x in _admins_raw.split(",") if x.strip()}
 
 DATA_DIR = ROOT / "data" / "montage"
-WORK_DIR = Path(os.environ.get("MONTAGE_WORK_DIR", "/tmp/montage"))
+WORK_DIR = Path(os.environ.get("MONTAGE_WORK_DIR") or Path(tempfile.gettempdir()) / "montage")
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "Montserrat-Bold.otf"
 
 LOGO_PATH = DATA_DIR / "logo.png"

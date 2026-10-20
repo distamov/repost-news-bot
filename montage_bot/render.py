@@ -4,7 +4,7 @@ from typing import Awaitable, Callable
 
 from . import config
 from .selector import Shot
-from .sources import run
+from .sources import concat_line, run
 from .subtitles import STRIP_TOP, Chunk, render_caption_track
 
 W, H, FPS = 720, 1280, 30
@@ -145,7 +145,7 @@ async def render_video(
             await progress(i + 1, len(shots))
 
     concat_list = job_dir / "concat.txt"
-    concat_list.write_text("".join(f"file '{p}'\n" for p in parts))
+    concat_list.write_text("".join(concat_line(p) for p in parts), encoding="utf-8")
     joined = job_dir / "joined.mp4"
     await run("ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(concat_list),
               "-c", "copy", str(joined), capture=False)
