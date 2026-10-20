@@ -4,8 +4,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-WorkingDirectory=/root/repost-news-bot
-ExecStart=/root/repost-news-bot/.venv/bin/python -m montage_bot.main
+WorkingDirectory=/root/montage-bot
+ExecStart=/root/montage-bot/.venv/bin/python -m montage_bot.main
 Restart=always
 RestartSec=5
 # Монтаж не должен отъедать ресурсы у новостного бота на том же сервере

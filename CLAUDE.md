@@ -41,29 +41,31 @@
 
 ## Сервер
 
-- Ubuntu; проект в `/root/repost-news-bot`, venv в `/root/repost-news-bot/.venv` (Python 3.14), секреты в `/root/repost-news-bot/.env`.
-- systemd-сервисы:
-  - `repost-bot.service` — новостной бот, уже установлен;
-  - `montage-bot.service` — бот монтажа, юнит лежит в `deploy/montage-bot.service`.
-- Рабочая ветка: `claude/uzbek-post-rewrite-bot-lshf0h`. Сервер подтягивает код через `git pull` из неё.
+- Ubuntu, Python 3.14. Рабочая ветка: `claude/uzbek-post-rewrite-bot-lshf0h`.
+- **Новостной бот** — `/root/repost-news-bot`, свой `.venv` и `.env`, сервис `repost-bot.service`.
+  **НЕ ТРОГАТЬ** (решение владельца): не делать `git pull` в этой папке, не перезапускать сервис, не править его `.env`. Он работает на старом коммите — так и задумано. Читать оттуда можно только через `grep` нужных строк, не выводя значения.
+- **Бот монтажа** — отдельная папка `/root/montage-bot`: свой клон этого же репо, свой `.venv`, свой `.env` (только переменные монтажа). Сервис `montage-bot.service`, юнит в `deploy/montage-bot.service`, уже нацелен на эту папку.
 
-## Как деплоить
+## Как деплоить бота монтажа (первая установка)
 
-Обновить новостного бота:
 ```
-cd /root/repost-news-bot && git pull origin claude/uzbek-post-rewrite-bot-lshf0h && .venv/bin/pip install -r requirements.txt && systemctl restart repost-bot && journalctl -u repost-bot -n 50 --no-pager
+apt install -y ffmpeg git python3-venv
+git clone -b claude/uzbek-post-rewrite-bot-lshf0h https://github.com/distamov/repost-news-bot.git /root/montage-bot
+cd /root/montage-bot && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+grep -E '^(TELEGRAM_API_ID|TELEGRAM_API_HASH|ADMIN_IDS)=' /root/repost-news-bot/.env > /root/montage-bot/.env
+```
+- Дописать в `/root/montage-bot/.env` строки `MONTAGE_BOT_TOKEN=` и `GROQ_API_KEY=`. Значения есть в локальном `.env` на ПК пользователя; их не печатать.
+- Запуск:
+```
+cp /root/montage-bot/deploy/montage-bot.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now montage-bot && journalctl -u montage-bot -n 30 --no-pager
+```
+- Лого и музыка с ПК: `scp data/montage/logo.png data/montage/music.m4a root@<IP>:/root/montage-bot/data/montage/` (папку `data/montage` на сервере создать заранее).
+- Обновление в дальнейшем — только в этой папке:
+```
+cd /root/montage-bot && git pull && .venv/bin/pip install -r requirements.txt && systemctl restart montage-bot
 ```
 
-Первая установка бота монтажа:
-- `apt install -y ffmpeg`;
-- дописать в серверный `.env` переменные `MONTAGE_BOT_TOKEN` и `GROQ_API_KEY` (`TELEGRAM_API_ID`/`HASH` и `ADMIN_IDS` там уже есть);
-- затем выполнить:
-```
-cp deploy/montage-bot.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now montage-bot && journalctl -u montage-bot -n 30 --no-pager
-```
-- лого и музыку можно перенести с ПК: `scp data/montage/logo.png data/montage/music.m4a root@<IP>:/root/repost-news-bot/data/montage/`.
-
-После деплоя проверь `systemctl status` обоих сервисов: должно быть `active (running)`, без перезапусков по кругу.
+После деплоя проверь `systemctl status montage-bot` (`active (running)`, без перезапусков по кругу). Отдельно убедись, что `repost-bot` по-прежнему `active (running)` и не перезапускался.
 
 ## Грабли, на которые уже наступали
 
@@ -77,6 +79,6 @@ cp deploy/montage-bot.service /etc/systemd/system/ && systemctl daemon-reload &&
 
 ## Статус и что дальше
 
-- На сервере, скорее всего, ещё нет последних коммитов новостного бота: очередь на диске, CTA, мульти-админка, ретраи таймаутов Gemini. Сначала проверь `git log -1` на сервере. После обновления убедись, что в `data/channels.json` и `data/sources.json` проставились `owner_id`/`uid` и что появился `data/admins.json`.
-- Бот монтажа протестирован на ПК, на сервер ещё не задеплоен.
+- Новостной бот на сервере работает на старом коммите, без очереди на диске, CTA, мульти-админки и ретраев таймаутов. Владелец решил его пока не обновлять — не трогать, пока он сам не попросит.
+- Бот монтажа протестирован на ПК, на сервер ещё не задеплоен. Ставится в отдельную папку `/root/montage-bot` (см. «Как деплоить»).
 - Открытый вопрос: узбекские субтитры в роликах оставлять латиницей (как отдаёт Whisper) или транслитерировать в кириллицу, как в Telegram-канале.
