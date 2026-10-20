@@ -1,4 +1,6 @@
 import json
+import shutil
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -35,6 +37,9 @@ class PendingPost:
     text_message_id: Optional[int] = None
     has_original: bool = False
     signature: str = ""
+    # Время создания превью (unix). У записей, сохранённых до появления
+    # поля, остаётся 0 — они считаются самыми старыми.
+    created_at: float = 0.0
 
 
 @dataclass
@@ -47,6 +52,7 @@ class PendingSelection:
     original_media: list
     chat_id: int
     requester_id: int
+    created_at: float = 0.0
 
 
 def _serialize_media_options(pid: str, media_options: list[list[MediaItem]]) -> list[list[dict]]:
@@ -119,6 +125,7 @@ class Storage:
 
     def create(self, **kwargs) -> PendingPost:
         pid = uuid.uuid4().hex[:8]
+        kwargs.setdefault("created_at", time.time())
         item = PendingPost(id=pid, **kwargs)
         self._items[pid] = item
         self._save()
@@ -136,8 +143,58 @@ class Storage:
                 f.unlink(missing_ok=True)
             folder.rmdir()
 
+    def _matching(self, before: float, owner_id: Optional[int]):
+        """Превью и незавершённые выборы канала, созданные не позже `before`.
+        owner_id=None — чьи угодно (для супер-админа), иначе только свои."""
+        def ok(x) -> bool:
+            return x.created_at <= before and (owner_id is None or x.requester_id == owner_id)
+
+        posts = [p for p in self._items.values() if ok(p)]
+        selections = [s for s in self._selections.values() if ok(s)]
+        return posts, selections
+
+    def cache_stats(self, before: float, owner_id: Optional[int]) -> tuple[int, int, int]:
+        """(сколько превью, сколько медиафайлов, сколько байт) попадёт под очистку."""
+        posts, selections = self._matching(before, owner_id)
+        files = size = 0
+        for p in posts:
+            for option in p.media_options:
+                for m in option:
+                    if isinstance(m.data, bytes):
+                        files += 1
+                        size += len(m.data)
+        for s in selections:
+            # photo_bytes обычно тот же объект, что и фото в original_media.
+            blobs = {id(b): b for b in [s.photo_bytes] + [m.data for m in s.original_media]}
+            for b in blobs.values():
+                if isinstance(b, bytes):
+                    files += 1
+                    size += len(b)
+        return len(posts) + len(selections), files, size
+
+    def clear_cache(self, before: float, owner_id: Optional[int]) -> int:
+        """Удаляет превью (с их фото/видео на диске) и незавершённые выборы
+        канала, созданные не позже `before`. Отложенные посты не трогает.
+        Сохраняет очередь один раз, а не на каждое удаление."""
+        posts, selections = self._matching(before, owner_id)
+        for p in posts:
+            self._items.pop(p.id, None)
+        for s in selections:
+            self._selections.pop(s.id, None)
+        self._save()
+        for p in posts:
+            shutil.rmtree(MEDIA_DIR / p.id, ignore_errors=True)
+        if owner_id is None and MEDIA_DIR.exists():
+            # Папки, на которые не ссылается ни одно оставшееся превью, —
+            # мусор от старых версий бота.
+            for folder in MEDIA_DIR.iterdir():
+                if folder.is_dir() and folder.name not in self._items:
+                    shutil.rmtree(folder, ignore_errors=True)
+        return len(posts) + len(selections)
+
     def create_selection(self, **kwargs) -> PendingSelection:
         sid = uuid.uuid4().hex[:8]
+        kwargs.setdefault("created_at", time.time())
         item = PendingSelection(id=sid, **kwargs)
         self._selections[sid] = item
         return item
