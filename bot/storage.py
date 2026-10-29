@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 MEDIA_DIR = DATA_DIR / "pending_media"
@@ -99,10 +99,13 @@ def _deserialize_media_options(records: list[list[dict]]) -> list[list[MediaItem
 
 
 class Storage:
-    def __init__(self):
+    def __init__(self, on_auto_clear: Optional[Callable[[int, int], None]] = None):
+        """on_auto_clear(сколько превью удалено, сколько байт было) вызывается
+        после автоочистки — чтобы уведомить админов."""
         self._items: dict[str, PendingPost] = {}
         self._selections: dict[str, PendingSelection] = {}
         self._group_buffers: dict[str, list] = {}
+        self._on_auto_clear = on_auto_clear
         self._load()
 
     def _load(self) -> None:
@@ -214,6 +217,8 @@ class Storage:
             "Кэш превью дорос до %d МБ (лимит %d МБ) — автоочистка, удалено превью: %d",
             size // 1024 // 1024, CACHE_LIMIT_BYTES // 1024 // 1024, removed,
         )
+        if self._on_auto_clear:
+            self._on_auto_clear(removed, size)
 
     def create_selection(self, **kwargs) -> PendingSelection:
         sid = uuid.uuid4().hex[:8]

@@ -24,7 +24,7 @@ from .pipeline import init_admin_store as init_pipeline_admin_store
 from .scheduled_store import ScheduledStore
 from .scheduler import run_scheduler
 from .sources_store import SourceStore
-from .storage import Storage
+from .storage import CACHE_LIMIT_BYTES, Storage
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,22 @@ async def main():
 
     llm = LLMService(config.GEMINI_API_KEY, config.GEMINI_MODEL, base_url=config.GEMINI_BASE_URL)
     photos = PhotoService(config.PEXELS_API_KEY, config.PIXABAY_API_KEY)
-    storage = Storage()
+
+    # Хранилище вызывает это синхронно, изнутри хендлеров — отправка уходит
+    # фоном, а ссылка на задачу держится, чтобы её не собрал GC.
+    notify_tasks = set()
+
+    def on_cache_auto_clear(removed: int, size: int) -> None:
+        text = (
+            f"🧹 Автоочистка: неразобранные превью заняли {size // 1024 // 1024} МБ "
+            f"(лимит {CACHE_LIMIT_BYTES // 1024 // 1024} МБ). Удалено старых превью: "
+            f"{removed} — их кнопки больше не работают."
+        )
+        task = asyncio.create_task(_notify_admins(bot, text, admins))
+        notify_tasks.add(task)
+        task.add_done_callback(notify_tasks.discard)
+
+    storage = Storage(on_auto_clear=on_cache_auto_clear)
     channels = ChannelStore(default_owner_id=default_owner_id)
     sources = SourceStore(default_owner_id=default_owner_id)
     scheduled = ScheduledStore()
