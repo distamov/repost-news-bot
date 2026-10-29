@@ -8,8 +8,8 @@ WorkingDirectory=/root/views-bot
 ExecStart=/root/views-bot/.venv/bin/python -m views_bot.main
 Restart=always
 RestartSec=5
-# Сервер с 1 ГБ памяти делится с новостным ботом — этому хватает с запасом
-MemoryMax=200M
+# Сервер с 1 ГБ памяти делится с новостным ботом — этот бот держит ~140 МБ, пик ~180
+MemoryMax=300M
 TimeoutStopSec=20
 
 [Install]

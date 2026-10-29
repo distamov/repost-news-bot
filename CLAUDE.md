@@ -55,7 +55,7 @@
 - **Новостной бот** — `/root/repost-news-bot`, свой `.venv` и `.env`, сервис `repost-bot.service`.
   **Деплоится сам**: `deploy-webhook.service` (порт 9000, `hooks.json`) на каждый push в рабочую ветку запускает `deploy.sh` — `git pull`, `pip install`, `systemctl restart repost-bot`. Значит, любой push в ветку сразу уходит в бой. Руками в этой папке ничего не делать, `.env` не править; читать оттуда можно только через `grep` нужных строк, не выводя значения.
 - **Бот монтажа** — отдельная папка `/root/montage-bot`: свой клон этого же репо, свой `.venv`, свой `.env` (только переменные монтажа). Сервис `montage-bot.service`, юнит в `deploy/montage-bot.service`, уже нацелен на эту папку.
-- **Бот просмотров** — так же, отдельная папка `/root/views-bot`: свой клон, `.venv` из `views_bot/requirements.txt`, свой `.env` (`BOT_TOKEN`, `SOCPROOF_API_KEY`, `VIEWS_CHANNELS`, `ADMIN_IDS`, `VIEWS_*`). Сервис `views-bot.service` (`deploy/views-bot.service`, `MemoryMax=200M`). Вебхук его **не** обновляет. Обновление: `cd /root/views-bot && git pull && .venv/bin/pip install -r views_bot/requirements.txt && systemctl restart views-bot`.
+- **Бот просмотров** — так же, отдельная папка `/root/views-bot`: свой клон, `.venv` из `views_bot/requirements.txt`, свой `.env` (`BOT_TOKEN`, `SOCPROOF_API_KEY`, `VIEWS_CHANNELS`, `ADMIN_IDS`, `VIEWS_*`). Сервис `views-bot.service` (`deploy/views-bot.service`, `MemoryMax=300M`, сам держит ~140 МБ). Вебхук его **не** обновляет. Обновление: `cd /root/views-bot && git pull && .venv/bin/pip install -r views_bot/requirements.txt && systemctl restart views-bot`.
 - Swap 2 ГБ (`/swapfile`, `vm.swappiness=10`), добавлен 29.10.2026.
 
 ## Как деплоить бота монтажа (первая установка)
