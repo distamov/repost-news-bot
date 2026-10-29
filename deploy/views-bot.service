@@ -1,0 +1,16 @@
+[Unit]
+Description=USHA GAP views bot (просмотры на новые посты через soc-proof)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/root/views-bot
+ExecStart=/root/views-bot/.venv/bin/python -m views_bot.main
+Restart=always
+RestartSec=5
+# Сервер с 1 ГБ памяти делится с новостным ботом — этому хватает с запасом
+MemoryMax=200M
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
