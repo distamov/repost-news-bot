@@ -1,4 +1,5 @@
 import json
+import logging
 import shutil
 import time
 import uuid
@@ -9,6 +10,13 @@ from typing import Optional, Union
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 MEDIA_DIR = DATA_DIR / "pending_media"
 DATA_FILE = DATA_DIR / "pending.json"
+
+# Неразобранные превью держат свои фото/видео прямо в памяти процесса. Когда
+# их набирается больше этого объёма, старые превью сбрасываются целиком —
+# иначе на сервере с 1 ГБ памяти бота убивает OOM.
+CACHE_LIMIT_BYTES = 200 * 1024 * 1024
+
+logger = logging.getLogger(__name__)
 
 # Данные медиа-элемента — либо URL/file_id (str), либо сырые байты (bytes).
 MediaData = Union[str, bytes]
@@ -105,6 +113,7 @@ class Storage:
                 rec = dict(rec)
                 rec["media_options"] = _deserialize_media_options(rec["media_options"])
                 self._items[rec["id"]] = PendingPost(**rec)
+        self._enforce_limit(keep_after=time.time())
 
     def _save(self) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -128,6 +137,7 @@ class Storage:
         kwargs.setdefault("created_at", time.time())
         item = PendingPost(id=pid, **kwargs)
         self._items[pid] = item
+        self._enforce_limit(keep_after=item.created_at)
         self._save()
         return item
 
@@ -192,11 +202,25 @@ class Storage:
                     shutil.rmtree(folder, ignore_errors=True)
         return len(posts) + len(selections)
 
+    def _enforce_limit(self, keep_after: float) -> None:
+        """Если медиа неразобранных превью заняли больше CACHE_LIMIT_BYTES —
+        удаляет все превью, созданные раньше `keep_after` (только что
+        пришедшее остаётся). Отложенные посты не трогает."""
+        _, _, size = self.cache_stats(float("inf"), None)
+        if size <= CACHE_LIMIT_BYTES:
+            return
+        removed = self.clear_cache(keep_after - 0.001, None)
+        logger.warning(
+            "Кэш превью дорос до %d МБ (лимит %d МБ) — автоочистка, удалено превью: %d",
+            size // 1024 // 1024, CACHE_LIMIT_BYTES // 1024 // 1024, removed,
+        )
+
     def create_selection(self, **kwargs) -> PendingSelection:
         sid = uuid.uuid4().hex[:8]
         kwargs.setdefault("created_at", time.time())
         item = PendingSelection(id=sid, **kwargs)
         self._selections[sid] = item
+        self._enforce_limit(keep_after=item.created_at)
         return item
 
     def get_selection(self, sid: str) -> Optional[PendingSelection]:

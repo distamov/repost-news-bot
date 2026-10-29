@@ -12,7 +12,6 @@ from . import config
 from .admins_store import AdminStore
 from .channels_store import ChannelStore
 from .handlers.admins import router as admins_router
-from .handlers.cache import router as cache_router
 from .handlers.channels import router as channels_router
 from .handlers.rewrite import init_admin_store, router as rewrite_router
 from .handlers.scheduled import router as scheduled_router
@@ -36,7 +35,6 @@ BOT_COMMANDS = [
     BotCommand(command="sources", description="Каналы-источники для автомониторинга"),
     BotCommand(command="scheduled", description="Отложенные посты: список и управление"),
     BotCommand(command="admins", description="Управление админами (только супер-админ)"),
-    BotCommand(command="clearcache", description="Очистить неразобранные превью и их фото/видео"),
 ]
 
 
@@ -57,7 +55,6 @@ async def main():
     )
     dp = Dispatcher()
     dp.include_router(admins_router)
-    dp.include_router(cache_router)
     dp.include_router(channels_router)
     dp.include_router(sources_router)
     dp.include_router(scheduled_router)
